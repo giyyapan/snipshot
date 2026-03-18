@@ -8,3 +8,4 @@ build/
 
 # Debug logs
 snapping_debug.log
+sync.sh
