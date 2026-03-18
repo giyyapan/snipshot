@@ -1,0 +1,10 @@
+# Build output
+build/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Debug logs
+snapping_debug.log
