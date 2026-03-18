@@ -32,7 +32,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var localMonitor: Any?
     private var overlayWindow: OverlayWindow?
     private var pinWindows: [PinWindow] = []
+    private var settingsWindow: SettingsWindow?
     var isCapturing = false
+    private var captureHotkey: HotkeyConfig = HotkeyConfig.defaultCapture
 
     // MARK: - App Lifecycle
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -40,10 +42,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.setActivationPolicy(.accessory)
 
+        // Load saved hotkey config
+        if let savedKeyCode = UserDefaults.standard.object(forKey: "captureHotkeyKeyCode") as? UInt16 {
+            let savedModifiers = UserDefaults.standard.object(forKey: "captureHotkeyModifiers") as? UInt ?? 0
+            captureHotkey = HotkeyConfig(keyCode: savedKeyCode, modifiers: NSEvent.ModifierFlags(rawValue: savedModifiers))
+        }
+
         setupStatusItem()
         setupGlobalHotkey()
 
-        logMessage("Snipshot ready. Press F1 to capture, F3 to pin from clipboard.")
+        logMessage("Snipshot v\(kSnipshotVersion) ready. Capture hotkey: \(captureHotkey.displayString), F3 to pin from clipboard.")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -56,11 +64,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Snipshot")
         }
+        updateStatusMenu()
+    }
 
+    private func updateStatusMenu() {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Capture (F1)", action: #selector(startCapture), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Pin from Clipboard (F3)", action: #selector(pinFromClipboard), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Capture (\(captureHotkey.displayString))", action: #selector(startCapture), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit Snipshot", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
     }
@@ -114,11 +125,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            let flags = event.flags
 
-            if keyCode == 122 { // F1
-                let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon!).takeUnretainedValue()
+            let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon!).takeUnretainedValue()
+            let hotkey = appDelegate.captureHotkey
+
+            // Check capture hotkey
+            let relevantFlags = flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift])
+            var expectedCGFlags: CGEventFlags = []
+            if hotkey.modifiers.contains(.command) { expectedCGFlags.insert(.maskCommand) }
+            if hotkey.modifiers.contains(.option) { expectedCGFlags.insert(.maskAlternate) }
+            if hotkey.modifiers.contains(.control) { expectedCGFlags.insert(.maskControl) }
+            if hotkey.modifiers.contains(.shift) { expectedCGFlags.insert(.maskShift) }
+
+            if keyCode == Int64(hotkey.keyCode) && relevantFlags == expectedCGFlags {
                 DispatchQueue.main.async {
-                    logMessage("F1 pressed (CGEvent tap)")
+                    logMessage("Capture hotkey pressed (CGEvent tap)")
                     appDelegate.startCapture()
                 }
                 return nil
@@ -159,36 +181,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
-        logMessage("CGEvent tap registered for F1/F3.")
+        logMessage("CGEvent tap registered.")
     }
 
     private func setupNSEventMonitor() {
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 122 {
-                logMessage("F1 pressed (global NSEvent monitor)")
-                self?.startCapture()
+            guard let self = self else { return }
+            if self.matchesCaptureHotkey(event) {
+                logMessage("Capture hotkey pressed (global NSEvent monitor)")
+                self.startCapture()
             } else if event.keyCode == 99 {
-                guard self?.isCapturing != true else { return }
+                guard !self.isCapturing else { return }
                 logMessage("F3 pressed (global NSEvent monitor)")
-                self?.pinFromClipboard()
+                self.pinFromClipboard()
             }
         }
 
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 122 {
-                logMessage("F1 pressed (local NSEvent monitor)")
-                self?.startCapture()
+            guard let self = self else { return event }
+            if self.matchesCaptureHotkey(event) {
+                logMessage("Capture hotkey pressed (local NSEvent monitor)")
+                self.startCapture()
                 return nil
             } else if event.keyCode == 99 {
-                guard self?.isCapturing != true else { return event }
+                guard !self.isCapturing else { return event }
                 logMessage("F3 pressed (local NSEvent monitor)")
-                self?.pinFromClipboard()
+                self.pinFromClipboard()
                 return nil
             }
             return event
         }
 
-        logMessage("NSEvent monitors registered for F1/F3.")
+        logMessage("NSEvent monitors registered.")
+    }
+
+    private func matchesCaptureHotkey(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        return event.keyCode == captureHotkey.keyCode && modifiers == captureHotkey.modifiers
     }
 
     private func removeGlobalHotkey() {
@@ -350,6 +379,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         pinImage(image, at: origin)
+    }
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindow()
+            settingsWindow?.onHotkeyChanged = { [weak self] newConfig in
+                self?.captureHotkey = newConfig
+                // Update menu item title (don't recreate status item)
+                self?.updateStatusMenu()
+                // Re-register hotkey listeners
+                self?.removeGlobalHotkey()
+                self?.setupGlobalHotkey()
+                logMessage("Capture hotkey changed to \(newConfig.displayString)")
+            }
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func quitApp() {

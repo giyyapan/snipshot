@@ -29,12 +29,14 @@ swiftc \
     "$PROJECT_DIR/Snipshot/OverlayPanels.swift" \
     "$PROJECT_DIR/Snipshot/OCRMode.swift" \
     "$PROJECT_DIR/Snipshot/PinWindow.swift" \
+    "$PROJECT_DIR/Snipshot/SettingsWindow.swift" \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
     -o "$MACOS/Snipshot"
 
-# Copy Info.plist and entitlements
+# Copy Info.plist, entitlements, and icon
 cp "$PROJECT_DIR/Snipshot/Info.plist" "$CONTENTS/Info.plist"
 cp "$PROJECT_DIR/Snipshot/Snipshot.entitlements" "$RESOURCES/Snipshot.entitlements"
+cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 
 # Sign with self-signed "Snipshot Dev" certificate for stable identity across rebuilds
 # (Run setup_cert.sh first if certificate doesn't exist)
