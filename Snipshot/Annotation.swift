@@ -212,18 +212,67 @@ class AnnotationElement {
 
 // MARK: - Annotation State
 class AnnotationState {
+    private static let colorKey = "annoColor"
+    private static let strokeKey = "annoStrokeWidths"
+
+    private static let colorNameMap: [String: NSColor] = [
+        "systemRed": .systemRed, "systemOrange": .systemOrange,
+        "systemYellow": .systemYellow, "systemGreen": .systemGreen,
+        "systemBlue": .systemBlue, "systemPurple": .systemPurple,
+        "white": .white, "black": .black
+    ]
+    private static let nameColorMap: [NSColor: String] = [
+        .systemRed: "systemRed", .systemOrange: "systemOrange",
+        .systemYellow: "systemYellow", .systemGreen: "systemGreen",
+        .systemBlue: "systemBlue", .systemPurple: "systemPurple",
+        .white: "white", .black: "black"
+    ]
+
     var currentTool: AnnotationTool? = nil
-    var currentColor: NSColor = .systemRed
+
+    var currentColor: NSColor = .systemRed {
+        didSet {
+            let ud = UserDefaults.standard
+            ud.set(Self.nameColorMap[currentColor] ?? "systemRed", forKey: Self.colorKey)
+        }
+    }
+
     var strokeWidths: [AnnotationTool: CGFloat] = [
         .arrow: 3,
         .rectangle: 2,
         .text: 4,
         .marker: 8,
         .mosaic: 10
-    ]
+    ] {
+        didSet {
+            var dict: [String: Double] = [:]
+            for (tool, width) in strokeWidths {
+                dict[tool.rawValue] = Double(width)
+            }
+            UserDefaults.standard.set(dict, forKey: Self.strokeKey)
+        }
+    }
+
     var elements: [AnnotationElement] = []
     var selectedElementId: UUID? = nil
     var nextMarkerNumber: Int = 1
+
+    init() {
+        // Load stroke widths FIRST (before color, since color didSet won't touch strokes)
+        let ud = UserDefaults.standard
+        if let dict = ud.dictionary(forKey: Self.strokeKey) as? [String: Double] {
+            for (key, val) in dict {
+                if let tool = AnnotationTool(rawValue: key) {
+                    strokeWidths[tool] = CGFloat(val)
+                }
+            }
+        }
+        // Load color (didSet will fire but only saves color key, won't overwrite strokes)
+        if let colorName = ud.string(forKey: Self.colorKey),
+           let color = Self.colorNameMap[colorName] {
+            currentColor = color
+        }
+    }
 
     var undoStack: [[AnnotationElement]] = []
 
