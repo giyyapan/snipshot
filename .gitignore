@@ -1,6 +1,9 @@
 # Build output
 build/
 
+# Signing keys (NEVER commit)
+keys/
+
 # macOS
 .DS_Store
 *.swp

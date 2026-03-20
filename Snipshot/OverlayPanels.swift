@@ -135,7 +135,7 @@ extension OverlayView {
         bx += (dividerW - spacing) / 2
 
         // OCR button
-        let ocrBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "doc.text.viewfinder", tooltip: "OCR Text Recognition")
+        let ocrBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "doc.text.viewfinder", tooltip: "OCR Text Recognition  O")
         ocrBtn.onPress = { [weak self] in self?.enterOCRMode() }
         panel.addSubview(ocrBtn); bx += btnSize
 

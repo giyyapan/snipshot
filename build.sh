@@ -1,6 +1,15 @@
 #!/bin/bash
 set -e
 
+# =============================================================================
+# build.sh — Build Snipshot
+#
+# Usage:
+#   ./build.sh              Dev build (self-signed, fast)
+#   ./build.sh dev          Same as above
+#   ./build.sh prod         Prod build (Developer ID + notarize + DMG)
+# =============================================================================
+
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
 APP_BUNDLE="$BUILD_DIR/Snipshot.app"
@@ -8,15 +17,34 @@ CONTENTS="$APP_BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
-echo "=== Building Snipshot ==="
+BUILD_MODE="${1:-dev}"
 
-# Create directories (preserve existing .app bundle to keep TCC permissions)
+# --- Configuration per mode ---
+KEYS_DIR="$PROJECT_DIR/keys"
+API_KEY_ID="F34YUX6BRT"
+API_ISSUER_ID="cee32055-ad0c-4658-aba5-e22215d14fef"
+TEAM_ID="AN68AMD3JC"
+API_KEY_FILE="$KEYS_DIR/AuthKey_${API_KEY_ID}.p8"
+BUNDLE_ID="com.giyyapan.snipshot"
+
+if [ "$BUILD_MODE" = "prod" ]; then
+    SIGN_IDENTITY="Developer ID Application"
+    SWIFT_OPT="-O"
+    echo "=== Building Snipshot (PROD) ==="
+else
+    SIGN_IDENTITY="Snipshot Dev"
+    SWIFT_OPT="-Onone"
+    echo "=== Building Snipshot (DEV) ==="
+fi
+
+# =============================================================================
+# Step 1: Compile
+# =============================================================================
 mkdir -p "$MACOS" "$RESOURCES"
 
-# Compile Swift sources (overwrites binary in-place)
-echo "Compiling..."
+echo "Compiling ($( [ "$BUILD_MODE" = "prod" ] && echo "optimized" || echo "debug" ))..."
 swiftc \
-    -Onone \
+    $SWIFT_OPT \
     -target arm64-apple-macosx14.0 \
     -sdk "$(xcrun --show-sdk-path)" \
     -framework Cocoa \
@@ -30,21 +58,119 @@ swiftc \
     "$PROJECT_DIR/Snipshot/OCRMode.swift" \
     "$PROJECT_DIR/Snipshot/PinWindow.swift" \
     "$PROJECT_DIR/Snipshot/SettingsWindow.swift" \
+    "$PROJECT_DIR/Snipshot/OnboardingWindow.swift" \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
     -o "$MACOS/Snipshot"
 
-# Copy Info.plist, entitlements, and icon
+# Copy resources
 cp "$PROJECT_DIR/Snipshot/Info.plist" "$CONTENTS/Info.plist"
 cp "$PROJECT_DIR/Snipshot/Snipshot.entitlements" "$RESOURCES/Snipshot.entitlements"
 cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 
-# Sign with self-signed "Snipshot Dev" certificate for stable identity across rebuilds
-# (Run setup_cert.sh first if certificate doesn't exist)
-SIGN_IDENTITY="Snipshot Dev"
+# =============================================================================
+# Step 2: Code sign
+# =============================================================================
 echo "Signing with '$SIGN_IDENTITY'..."
-codesign --force --sign "$SIGN_IDENTITY" --entitlements "$PROJECT_DIR/Snipshot/Snipshot.entitlements" "$APP_BUNDLE"
 
-echo "=== Build complete: $APP_BUNDLE ==="
+if [ "$BUILD_MODE" = "prod" ]; then
+    # Prod: find full Developer ID identity, sign with hardened runtime + timestamp
+    FULL_IDENTITY=$(security find-identity -p codesigning -v \
+        | grep "Developer ID Application" \
+        | grep -v "CSSMERR_TP_NOT_TRUSTED" \
+        | head -1 \
+        | sed 's/.*"\(.*\)".*/\1/')
+
+    if [ -z "$FULL_IDENTITY" ]; then
+        echo ""
+        echo "ERROR: No trusted Developer ID Application certificate found."
+        echo "Run ./setup_signing.sh first to create one."
+        exit 1
+    fi
+
+    echo "  Using: $FULL_IDENTITY"
+    codesign --force --deep --options runtime --timestamp \
+        --sign "$FULL_IDENTITY" \
+        --entitlements "$PROJECT_DIR/Snipshot/Snipshot.entitlements" \
+        "$APP_BUNDLE"
+else
+    # Dev: simple self-signed
+    codesign --force --sign "$SIGN_IDENTITY" \
+        --entitlements "$PROJECT_DIR/Snipshot/Snipshot.entitlements" \
+        "$APP_BUNDLE"
+fi
+
+echo "Signing complete."
+
+# =============================================================================
+# Dev mode: done here
+# =============================================================================
+if [ "$BUILD_MODE" != "prod" ]; then
+    echo ""
+    echo "=== Dev build complete: $APP_BUNDLE ==="
+    echo "To run: open $APP_BUNDLE"
+    exit 0
+fi
+
+# =============================================================================
+# Step 3 (prod): Create DMG
+# =============================================================================
 echo ""
-echo "To run: open $APP_BUNDLE"
-echo "Or:     $MACOS/Snipshot"
+echo "Creating DMG..."
+
+DMG_DIR="$BUILD_DIR/dmg_staging"
+VERSION=$(defaults read "$CONTENTS/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "0.1.0")
+DMG_NAME="Snipshot-${VERSION}.dmg"
+DMG_PATH="$BUILD_DIR/$DMG_NAME"
+
+rm -rf "$DMG_DIR"
+mkdir -p "$DMG_DIR"
+cp -R "$APP_BUNDLE" "$DMG_DIR/"
+
+# Create symlink to /Applications for drag-install
+ln -s /Applications "$DMG_DIR/Applications"
+
+# Build DMG
+rm -f "$DMG_PATH"
+hdiutil create -volname "Snipshot" \
+    -srcfolder "$DMG_DIR" \
+    -ov -format UDZO \
+    "$DMG_PATH" \
+    > /dev/null
+
+rm -rf "$DMG_DIR"
+echo "  Created: $DMG_PATH"
+
+# =============================================================================
+# Step 4 (prod): Notarize
+# =============================================================================
+echo ""
+echo "Submitting for notarization..."
+echo "  (This may take a few minutes)"
+
+if [ ! -f "$API_KEY_FILE" ]; then
+    echo "ERROR: API key file not found: $API_KEY_FILE"
+    echo "Place your .p8 key at: $API_KEY_FILE"
+    exit 1
+fi
+
+xcrun notarytool submit "$DMG_PATH" \
+    --key "$API_KEY_FILE" \
+    --key-id "$API_KEY_ID" \
+    --issuer "$API_ISSUER_ID" \
+    --wait
+
+# =============================================================================
+# Step 5 (prod): Staple
+# =============================================================================
+echo ""
+echo "Stapling notarization ticket..."
+xcrun stapler staple "$DMG_PATH"
+
+echo ""
+echo "=== Prod build complete! ==="
+echo ""
+echo "  DMG: $DMG_PATH"
+echo "  Signed by: $FULL_IDENTITY"
+echo "  Notarized & stapled: ✓"
+echo ""
+echo "  This DMG can be distributed to anyone."

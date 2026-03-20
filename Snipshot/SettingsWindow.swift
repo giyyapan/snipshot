@@ -1,7 +1,7 @@
 import Cocoa
 import Carbon.HIToolbox
 
-let kSnipshotVersion = "0.1.0"
+let kSnipshotVersion = "0.2.0"
 
 // MARK: - Hotkey Configuration
 
@@ -43,10 +43,11 @@ struct HotkeyConfig: Equatable {
 
 // MARK: - Settings Window
 
-class SettingsWindow: NSPanel {
+class SettingsWindow: NSWindow {
     private var hotkeyField: HotkeyRecorderField!
     private var currentConfig: HotkeyConfig
     var onHotkeyChanged: ((HotkeyConfig) -> Void)?
+    var onShowOnboarding: (() -> Void)?
 
     init() {
         // Load saved hotkey or use default
@@ -57,7 +58,7 @@ class SettingsWindow: NSPanel {
         currentConfig = HotkeyConfig(keyCode: savedKeyCode, modifiers: NSEvent.ModifierFlags(rawValue: savedModifiers))
 
         let width: CGFloat = 380
-        let height: CGFloat = 200
+        let height: CGFloat = 340
         let screenFrame = NSScreen.main?.frame ?? .zero
         let rect = NSRect(
             x: (screenFrame.width - width) / 2,
@@ -72,8 +73,7 @@ class SettingsWindow: NSPanel {
             defer: false
         )
         self.title = "Snipshot Settings"
-        self.isFloatingPanel = true
-        self.level = .floating
+        self.level = .normal
         self.animationBehavior = .default
         self.isReleasedWhenClosed = false
         setupUI()
@@ -116,6 +116,42 @@ class SettingsWindow: NSPanel {
         resetButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(resetButton)
 
+        // --- Separator ---
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(separator)
+
+        // --- Debug section ---
+        let debugTitle = NSTextField(labelWithString: "Debug")
+        debugTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        debugTitle.textColor = .labelColor
+        debugTitle.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(debugTitle)
+
+        // Always show onboarding checkbox
+        let onboardingCheckbox = NSButton(checkboxWithTitle: "Always show onboarding on launch",
+                                          target: self, action: #selector(toggleAlwaysOnboarding(_:)))
+        onboardingCheckbox.state = UserDefaults.standard.bool(forKey: "debugAlwaysShowOnboarding") ? .on : .off
+        onboardingCheckbox.controlSize = .regular
+        onboardingCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(onboardingCheckbox)
+
+        // Show onboarding now button
+        let showNowButton = NSButton(title: "Show Onboarding Now", target: self, action: #selector(showOnboardingNow))
+        showNowButton.bezelStyle = .rounded
+        showNowButton.controlSize = .regular
+        showNowButton.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(showNowButton)
+
+        // Reset everything & quit button
+        let resetAllButton = NSButton(title: "Reset Everything & Quit", target: self, action: #selector(resetEverythingAndQuit))
+        resetAllButton.bezelStyle = .rounded
+        resetAllButton.controlSize = .regular
+        resetAllButton.contentTintColor = .systemRed
+        resetAllButton.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(resetAllButton)
+
         NSLayoutConstraint.activate([
             hotkeyTitle.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             hotkeyTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
@@ -127,6 +163,22 @@ class SettingsWindow: NSPanel {
 
             resetButton.topAnchor.constraint(equalTo: hotkeyTitle.bottomAnchor, constant: 20),
             resetButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+
+            separator.topAnchor.constraint(equalTo: resetButton.bottomAnchor, constant: 20),
+            separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+
+            debugTitle.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 16),
+            debugTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+
+            onboardingCheckbox.topAnchor.constraint(equalTo: debugTitle.bottomAnchor, constant: 10),
+            onboardingCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+
+            showNowButton.topAnchor.constraint(equalTo: onboardingCheckbox.bottomAnchor, constant: 12),
+            showNowButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+
+            resetAllButton.topAnchor.constraint(equalTo: showNowButton.bottomAnchor, constant: 12),
+            resetAllButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
 
             versionLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
             versionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
@@ -140,6 +192,36 @@ class SettingsWindow: NSPanel {
         UserDefaults.standard.set(defaultConfig.keyCode, forKey: "captureHotkeyKeyCode")
         UserDefaults.standard.set(defaultConfig.modifiers.rawValue, forKey: "captureHotkeyModifiers")
         onHotkeyChanged?(defaultConfig)
+    }
+
+    @objc private func toggleAlwaysOnboarding(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        UserDefaults.standard.set(enabled, forKey: "debugAlwaysShowOnboarding")
+        logMessage("Debug: Always show onboarding = \(enabled)")
+    }
+
+    @objc private func showOnboardingNow() {
+        onShowOnboarding?()
+    }
+
+    @objc private func resetEverythingAndQuit() {
+        let alert = NSAlert()
+        alert.messageText = "Reset Everything?"
+        alert.informativeText = "This will clear all settings and quit the app. Next launch will behave like a fresh install (permissions are not revoked)."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reset & Quit")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // Remove all UserDefaults for this app
+            if let bundleId = Bundle.main.bundleIdentifier {
+                UserDefaults.standard.removePersistentDomain(forName: bundleId)
+                UserDefaults.standard.synchronize()
+            }
+            logMessage("Debug: Reset everything and quitting.")
+            NSApp.terminate(nil)
+        }
     }
 }
 

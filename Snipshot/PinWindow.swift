@@ -82,14 +82,9 @@ class PinWindow: NSWindow {
         pinView?.showCopyFeedback()
     }
 
-    // MARK: - Scroll to zoom
-    override func scrollWheel(with event: NSEvent) {
-        let delta = event.scrollingDeltaY
-        guard abs(delta) > 0.1 else { return }
-
-        let zoomFactor: CGFloat = 1.0 + (delta * 0.03)
-        let newScale = (currentScale * zoomFactor).clamped(to: minScale...maxScale)
-
+    // MARK: - Zoom (shared logic for mouse wheel and trackpad pinch)
+    private func applyZoom(to targetScale: CGFloat) {
+        let newScale = targetScale.clamped(to: minScale...maxScale)
         guard abs(newScale - currentScale) > 0.001 else { return }
 
         let mouseScreen = NSEvent.mouseLocation
@@ -114,6 +109,22 @@ class PinWindow: NSWindow {
 
         contentView?.frame = NSRect(origin: .zero, size: NSSize(width: newWidth, height: newHeight))
         imageView.frame = NSRect(origin: .zero, size: NSSize(width: newWidth, height: newHeight))
+    }
+
+    // MARK: - Mouse scroll wheel → zoom
+    override func scrollWheel(with event: NSEvent) {
+        // Only handle discrete mouse wheel events; ignore trackpad scroll
+        guard !event.hasPreciseScrollingDeltas else { return }
+        let delta = event.scrollingDeltaY
+        guard abs(delta) > 0.1 else { return }
+        let zoomFactor: CGFloat = 1.0 + (delta * 0.03)
+        applyZoom(to: currentScale * zoomFactor)
+    }
+
+    // MARK: - Trackpad pinch → zoom
+    override func magnify(with event: NSEvent) {
+        let zoomFactor: CGFloat = 1.0 + event.magnification
+        applyZoom(to: currentScale * zoomFactor)
     }
 }
 

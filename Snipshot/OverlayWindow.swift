@@ -114,6 +114,14 @@ class OverlayView: NSView {
     var ocrPanelView: NSView?
     let imageAnalyzer = ImageAnalyzer()
 
+    // Color picker (idle mode)
+    enum ColorFormat: Int, CaseIterable {
+        case hex = 0, rgb, hsl
+        var next: ColorFormat { ColorFormat(rawValue: (rawValue + 1) % ColorFormat.allCases.count)! }
+    }
+    var colorFormat: ColorFormat = .hex
+    var cachedBitmapRep: NSBitmapImageRep?
+
     // Window snapping
     var windowFrames: [NSRect] = []
     var hoveredWindowFrame: NSRect? = nil
@@ -128,6 +136,11 @@ class OverlayView: NSView {
 
         // Cache window frames for snapping
         cacheWindowFrames()
+
+        // Cache bitmap rep for color picker pixel reading
+        if let tiff = screenshot.tiffRepresentation {
+            cachedBitmapRep = NSBitmapImageRep(data: tiff)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -467,6 +480,255 @@ class OverlayView: NSView {
         return nil
     }
 
+    // MARK: - Color Picker Helpers
+
+    /// Read pixel color from the screenshot bitmap at a view-coordinate point.
+    /// Returns nil if the point is out of bounds.
+    func pixelColor(atViewPoint point: NSPoint) -> NSColor? {
+        guard let bitmap = cachedBitmapRep else { return nil }
+        let bitmapW = bitmap.pixelsWide
+        let bitmapH = bitmap.pixelsHigh
+        let viewW = bounds.width
+        let viewH = bounds.height
+        // Convert view coords (bottom-left origin) to bitmap coords (top-left origin)
+        let bx = Int(point.x * CGFloat(bitmapW) / viewW)
+        let by = Int((viewH - point.y) * CGFloat(bitmapH) / viewH)
+        guard bx >= 0 && bx < bitmapW && by >= 0 && by < bitmapH else { return nil }
+        return bitmap.colorAt(x: bx, y: by)
+    }
+
+    /// Get NxN pixel colors around a view-coordinate point (N = 2*radius+1).
+    /// Returns array of N*N colors in row-major order (top-left to bottom-right visually).
+    func pixelColorsNxN(atViewPoint point: NSPoint, radius: Int) -> [NSColor?] {
+        let n = radius * 2 + 1
+        guard let bitmap = cachedBitmapRep else { return Array(repeating: nil, count: n * n) }
+        let bitmapW = bitmap.pixelsWide
+        let bitmapH = bitmap.pixelsHigh
+        let viewW = bounds.width
+        let viewH = bounds.height
+        let bx = Int(point.x * CGFloat(bitmapW) / viewW)
+        let by = Int((viewH - point.y) * CGFloat(bitmapH) / viewH)
+        var colors: [NSColor?] = []
+        for dy in -radius...radius {
+            for dx in -radius...radius {
+                let px = bx + dx
+                let py = by + dy
+                if px >= 0 && px < bitmapW && py >= 0 && py < bitmapH {
+                    colors.append(bitmap.colorAt(x: px, y: py))
+                } else {
+                    colors.append(nil)
+                }
+            }
+        }
+        return colors
+    }
+
+    /// Format an NSColor to string based on current colorFormat.
+    func formatColor(_ color: NSColor) -> String {
+        let c = color.usingColorSpace(.sRGB) ?? color
+        let r = c.redComponent
+        let g = c.greenComponent
+        let b = c.blueComponent
+        switch colorFormat {
+        case .hex:
+            return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+        case .rgb:
+            return String(format: "rgb(%d, %d, %d)", Int(r * 255), Int(g * 255), Int(b * 255))
+        case .hsl:
+            let maxC = max(r, g, b)
+            let minC = min(r, g, b)
+            let l = (maxC + minC) / 2
+            if maxC == minC {
+                return String(format: "hsl(0, 0%%, %d%%)", Int(l * 100))
+            }
+            let d = maxC - minC
+            let s = l > 0.5 ? d / (2 - maxC - minC) : d / (maxC + minC)
+            var h: CGFloat
+            if maxC == r {
+                h = (g - b) / d + (g < b ? 6 : 0)
+            } else if maxC == g {
+                h = (b - r) / d + 2
+            } else {
+                h = (r - g) / d + 4
+            }
+            h /= 6
+            return String(format: "hsl(%d, %d%%, %d%%)", Int(h * 360), Int(s * 100), Int(l * 100))
+        }
+    }
+
+    /// Draw the 9x9 pixel preview box and color value label near the cursor.
+    /// The grid box and the color label are laid out independently so the label
+    /// never stretches the grid.
+    private func drawColorPicker(at point: NSPoint) {
+        let gridN = 9
+        let radius = gridN / 2  // 4
+        let colors = pixelColorsNxN(atViewPoint: point, radius: radius)
+        let centerIndex = radius * gridN + radius
+        let centerColor = colors[centerIndex]
+
+        let cellSize: CGFloat = 10
+        let gridSize = cellSize * CGFloat(gridN)
+        let gridPadding: CGFloat = 3
+        let labelFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+
+        // --- Grid box dimensions (fixed) ---
+        let gridBoxWidth = gridSize + gridPadding * 2
+        let gridBoxHeight = gridSize + gridPadding * 2
+
+        // --- Label dimensions ---
+        let colorText: String
+        if let cc = centerColor {
+            colorText = formatColor(cc)
+        } else {
+            colorText = "---"
+        }
+        let textAttrs: [NSAttributedString.Key: Any] = [
+            .font: labelFont,
+            .foregroundColor: NSColor.white
+        ]
+        let textSize = (colorText as NSString).size(withAttributes: textAttrs)
+        let labelPaddingH: CGFloat = 6
+        let labelPaddingV: CGFloat = 3
+        let labelBoxWidth = textSize.width + labelPaddingH * 2
+        let labelBoxHeight = textSize.height + labelPaddingV * 2
+        let labelGap: CGFloat = 3  // gap between grid box and label box
+
+        // --- Combined bounding height for positioning ---
+        let totalHeight = gridBoxHeight + labelGap + labelBoxHeight
+
+        // Position: offset from cursor (right-bottom, with fallback)
+        let offsetX: CGFloat = 20
+        let offsetY: CGFloat = -20
+        var anchorOrigin = NSPoint(x: point.x + offsetX, y: point.y + offsetY - totalHeight)
+        // Keep within bounds (use the wider of the two for x check)
+        let maxWidth = max(gridBoxWidth, labelBoxWidth)
+        if anchorOrigin.x + maxWidth > bounds.maxX - 4 {
+            anchorOrigin.x = point.x - offsetX - maxWidth
+        }
+        if anchorOrigin.y < bounds.minY + 4 {
+            anchorOrigin.y = point.y - offsetY
+        }
+        if anchorOrigin.x < bounds.minX + 4 {
+            anchorOrigin.x = bounds.minX + 4
+        }
+
+        // --- Draw grid box ---
+        let gridBoxOrigin = NSPoint(x: anchorOrigin.x, y: anchorOrigin.y + labelBoxHeight + labelGap)
+        let gridBoxRect = NSRect(x: gridBoxOrigin.x, y: gridBoxOrigin.y, width: gridBoxWidth, height: gridBoxHeight)
+        NSColor.black.withAlphaComponent(0.8).setFill()
+        NSBezierPath(roundedRect: gridBoxRect, xRadius: 6, yRadius: 6).fill()
+
+        let gridOriginX = gridBoxOrigin.x + gridPadding
+        let gridOriginY = gridBoxOrigin.y + gridPadding
+
+        for row in 0..<gridN {
+            for col in 0..<gridN {
+                let idx = row * gridN + col
+                let cellRect = NSRect(
+                    x: gridOriginX + CGFloat(col) * cellSize,
+                    y: gridOriginY + CGFloat(gridN - 1 - row) * cellSize,
+                    width: cellSize,
+                    height: cellSize
+                )
+                if let c = colors[idx] {
+                    c.setFill()
+                } else {
+                    NSColor.darkGray.setFill()
+                }
+                cellRect.fill()
+
+                // Draw thin grid lines
+                NSColor.black.withAlphaComponent(0.15).setStroke()
+                let cellPath = NSBezierPath(rect: cellRect)
+                cellPath.lineWidth = 0.5
+                cellPath.stroke()
+            }
+        }
+
+        // Highlight center cell
+        let centerRect = NSRect(
+            x: gridOriginX + CGFloat(radius) * cellSize,
+            y: gridOriginY + CGFloat(radius) * cellSize,
+            width: cellSize,
+            height: cellSize
+        )
+        NSColor.white.setStroke()
+        let centerPath = NSBezierPath(rect: centerRect.insetBy(dx: 0.5, dy: 0.5))
+        centerPath.lineWidth = 1.5
+        centerPath.stroke()
+
+        // --- Draw color label box (independent, below grid, left-aligned) ---
+        let labelBoxOrigin = NSPoint(x: anchorOrigin.x, y: anchorOrigin.y)
+        let labelBoxRect = NSRect(x: labelBoxOrigin.x, y: labelBoxOrigin.y, width: labelBoxWidth, height: labelBoxHeight)
+        NSColor.black.withAlphaComponent(0.8).setFill()
+        NSBezierPath(roundedRect: labelBoxRect, xRadius: 4, yRadius: 4).fill()
+
+        let textOrigin = NSPoint(
+            x: labelBoxOrigin.x + labelPaddingH,
+            y: labelBoxOrigin.y + labelPaddingV
+        )
+        (colorText as NSString).draw(at: textOrigin, withAttributes: textAttrs)
+    }
+
+    /// Draw the keyboard shortcuts tips box in the bottom-left corner.
+    /// Hidden when mouse is near it or when selection exists.
+    private func drawTipsBox(mousePos: NSPoint) {
+        let tips: [(String, String)] = [
+            ("Esc", "Exit"),
+            ("Shift", "Switch color format"),
+            ("C", "Copy color value"),
+        ]
+
+        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+        let descFont = NSFont.systemFont(ofSize: 11, weight: .regular)
+        let keyAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let descAttrs: [NSAttributedString.Key: Any] = [.font: descFont, .foregroundColor: NSColor(white: 0.75, alpha: 1.0)]
+
+        let padding: CGFloat = 10
+        let lineSpacing: CGFloat = 4
+        let keyDescGap: CGFloat = 8
+
+        // Calculate dimensions
+        var maxKeyWidth: CGFloat = 0
+        var maxDescWidth: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        for (key, desc) in tips {
+            let ks = (key as NSString).size(withAttributes: keyAttrs)
+            let ds = (desc as NSString).size(withAttributes: descAttrs)
+            maxKeyWidth = max(maxKeyWidth, ks.width)
+            maxDescWidth = max(maxDescWidth, ds.width)
+            lineHeight = max(lineHeight, max(ks.height, ds.height))
+        }
+
+        let boxWidth = padding + maxKeyWidth + keyDescGap + maxDescWidth + padding
+        let boxHeight = padding + CGFloat(tips.count) * lineHeight + CGFloat(tips.count - 1) * lineSpacing + padding
+
+        let margin: CGFloat = 12
+        let boxOrigin = NSPoint(x: bounds.minX + margin, y: bounds.minY + margin)
+        let boxRect = NSRect(x: boxOrigin.x, y: boxOrigin.y, width: boxWidth, height: boxHeight)
+
+        // Hide if mouse is near the tips box
+        let hoverMargin: CGFloat = 40
+        let expandedRect = boxRect.insetBy(dx: -hoverMargin, dy: -hoverMargin)
+        if expandedRect.contains(mousePos) {
+            return
+        }
+
+        // Draw background
+        NSColor.black.withAlphaComponent(0.75).setFill()
+        NSBezierPath(roundedRect: boxRect, xRadius: 6, yRadius: 6).fill()
+
+        // Draw tips
+        var y = boxOrigin.y + boxHeight - padding - lineHeight
+        for (key, desc) in tips {
+            let keyStr = key as NSString
+            let descStr = desc as NSString
+            keyStr.draw(at: NSPoint(x: boxOrigin.x + padding, y: y), withAttributes: keyAttrs)
+            descStr.draw(at: NSPoint(x: boxOrigin.x + padding + maxKeyWidth + keyDescGap, y: y), withAttributes: descAttrs)
+            y -= lineHeight + lineSpacing
+        }
+    }
+
     // MARK: - Drawing
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
@@ -536,6 +798,8 @@ class OverlayView: NSView {
                 drawWindowHighlight(winFrame)
             }
             drawCrosshair(at: mousePos)
+            drawColorPicker(at: mousePos)
+            drawTipsBox(mousePos: mousePos)
         }
     }
 
@@ -894,11 +1158,23 @@ class OverlayView: NSView {
         onAction(.cancel)
     }
 
-    // MARK: - Scroll Wheel (adjust stroke width)
+    // MARK: - Scroll Wheel / Pinch (adjust stroke width)
     override func scrollWheel(with event: NSEvent) {
+        // Only handle discrete mouse wheel events; ignore trackpad scroll
+        guard !event.hasPreciseScrollingDeltas else { return }
         guard mode == .annotating || mode == .selected else { return }
         if mode == .ocrMode { return }
         let delta: CGFloat = event.scrollingDeltaY > 0 ? 0.5 : -0.5
+        annoState.adjustStrokeWidth(delta: delta)
+        refreshSecondaryPanel()
+        needsDisplay = true
+    }
+
+    // MARK: - Trackpad pinch → adjust stroke width
+    override func magnify(with event: NSEvent) {
+        guard mode == .annotating || mode == .selected else { return }
+        if mode == .ocrMode { return }
+        let delta: CGFloat = event.magnification > 0 ? 0.5 : -0.5
         annoState.adjustStrokeWidth(delta: delta)
         refreshSecondaryPanel()
         needsDisplay = true
@@ -940,6 +1216,18 @@ class OverlayView: NSView {
             return
         }
 
+        // Idle mode: 'c' copies color value
+        if mode == .idle && flags.isEmpty && event.characters?.lowercased() == "c" {
+            if let mousePos = currentMousePosition, let color = pixelColor(atViewPoint: mousePos) {
+                let colorString = formatColor(color)
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(colorString, forType: .string)
+            }
+            onAction(.cancel)
+            return
+        }
+
         if event.keyCode == 53 { // Escape
             onAction(.cancel)
         } else if event.keyCode == 36 { // Enter
@@ -968,6 +1256,7 @@ class OverlayView: NSView {
             case "t": selectTool(.text)
             case "c": selectTool(.marker)
             case "m": selectTool(.mosaic)
+            case "o": enterOCRMode()
             default:
                 if mode == .selected {
                     let nudge: CGFloat = 1
@@ -990,6 +1279,16 @@ class OverlayView: NSView {
             default: break
             }
         }
+    }
+
+    // MARK: - Modifier Key Events (Shift to toggle color format)
+    override func flagsChanged(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if mode == .idle && flags.contains(.shift) {
+            colorFormat = colorFormat.next
+            needsDisplay = true
+        }
+        super.flagsChanged(with: event)
     }
 
     // MARK: - Text Editing

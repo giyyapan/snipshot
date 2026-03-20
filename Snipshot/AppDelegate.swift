@@ -23,7 +23,7 @@ func logMessage(_ message: String) {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Properties
     private var statusItem: NSStatusItem!
@@ -33,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlayWindow: OverlayWindow?
     private var pinWindows: [PinWindow] = []
     private var settingsWindow: SettingsWindow?
+    private var onboardingWindow: OnboardingWindow?
     var isCapturing = false
     private var captureHotkey: HotkeyConfig = HotkeyConfig.defaultCapture
 
@@ -49,7 +50,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupStatusItem()
-        setupGlobalHotkey()
+
+        // Reset onboarding state if permissions were revoked since last run
+        OnboardingWindow.resetIfPermissionsRevoked()
+
+        // Check permissions and show onboarding if needed
+        let forceOnboarding = UserDefaults.standard.bool(forKey: "debugAlwaysShowOnboarding")
+        if OnboardingWindow.shouldShowOnboarding() || forceOnboarding {
+            logMessage("Showing onboarding (should show: \(OnboardingWindow.shouldShowOnboarding()), debug force: \(forceOnboarding))")
+            showOnboarding()
+            // If accessibility is already granted, register hotkey immediately
+            if AXIsProcessTrusted() {
+                setupGlobalHotkey()
+            }
+            // Otherwise, onboarding's polling will call onAccessibilityGranted when ready
+        } else {
+            // No onboarding needed, register hotkey directly
+            setupGlobalHotkey()
+        }
 
         logMessage("Snipshot v\(kSnipshotVersion) ready. Capture hotkey: \(captureHotkey.displayString), F3 to pin from clipboard.")
     }
@@ -84,24 +102,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if trusted {
             setupEventTap()
         } else {
-            logMessage("Accessibility not granted. Prompting user...")
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-            pollForAccessibility()
+            logMessage("Accessibility not granted. Hotkey will be registered when granted.")
         }
 
         setupNSEventMonitor()
-    }
-
-    private func pollForAccessibility() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            if AXIsProcessTrusted() {
-                logMessage("Accessibility permission granted!")
-                self?.setupEventTap()
-            } else {
-                self?.pollForAccessibility()
-            }
-        }
     }
 
     private func setupEventTap() {
@@ -393,9 +397,66 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.setupGlobalHotkey()
                 logMessage("Capture hotkey changed to \(newConfig.displayString)")
             }
+            settingsWindow?.onShowOnboarding = { [weak self] in
+                self?.showOnboarding()
+            }
+            settingsWindow?.delegate = self
         }
+        showDockIcon()
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Onboarding
+    private func showOnboarding() {
+        if onboardingWindow == nil {
+            onboardingWindow = OnboardingWindow()
+            onboardingWindow?.onComplete = { [weak self] in
+                logMessage("Onboarding complete.")
+                self?.onboardingWindow = nil
+                self?.hideDockIconIfNoWindows()
+            }
+            onboardingWindow?.onAccessibilityGranted = { [weak self] in
+                logMessage("Accessibility granted via onboarding, registering hotkey.")
+                self?.setupGlobalHotkey()
+            }
+            onboardingWindow?.onOpenSettings = { [weak self] in
+                self?.openSettings()
+            }
+            onboardingWindow?.delegate = self
+        }
+        showDockIcon()
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Activation Policy (Dock Icon)
+
+    private func showDockIcon() {
+        NSApp.setActivationPolicy(.regular)
+    }
+
+    private func hideDockIconIfNoWindows() {
+        // Only hide dock icon if no managed windows are visible
+        let hasVisibleWindows = (onboardingWindow?.isVisible == true) || (settingsWindow?.isVisible == true)
+        if !hasVisibleWindows {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        if window === onboardingWindow {
+            onboardingWindow = nil
+        } else if window === settingsWindow {
+            settingsWindow = nil
+        }
+        // Delay slightly so the window finishes closing before we check
+        DispatchQueue.main.async { [weak self] in
+            self?.hideDockIconIfNoWindows()
+        }
     }
 
     @objc private func quitApp() {
