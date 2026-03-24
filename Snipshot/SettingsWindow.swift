@@ -1,7 +1,8 @@
 import Cocoa
 import Carbon.HIToolbox
+import ServiceManagement
 
-let kSnipshotVersion = "0.2.0"
+let kSnipshotVersion = "0.3.0"
 
 // MARK: - Hotkey Configuration
 
@@ -49,6 +50,15 @@ class SettingsWindow: NSWindow {
     var onHotkeyChanged: ((HotkeyConfig) -> Void)?
     var onShowOnboarding: (() -> Void)?
 
+    // Debug section views (for collapse/expand)
+    private var debugDisclosureButton: NSButton!
+    private var debugContentViews: [NSView] = []
+    private var debugContentConstraints: [NSLayoutConstraint] = []
+    private var debugIsExpanded = false
+
+    // Dynamic height constraints
+    private var windowHeightConstraint: NSLayoutConstraint?
+
     init() {
         // Load saved hotkey or use default
         let savedKeyCode = UserDefaults.standard.object(forKey: "captureHotkeyKeyCode") as? UInt16
@@ -57,8 +67,8 @@ class SettingsWindow: NSWindow {
             ?? HotkeyConfig.defaultCapture.modifiers.rawValue
         currentConfig = HotkeyConfig(keyCode: savedKeyCode, modifiers: NSEvent.ModifierFlags(rawValue: savedModifiers))
 
-        let width: CGFloat = 380
-        let height: CGFloat = 340
+        let width: CGFloat = 400
+        let height: CGFloat = 300
         let screenFrame = NSScreen.main?.frame ?? .zero
         let rect = NSRect(
             x: (screenFrame.width - width) / 2,
@@ -83,53 +93,106 @@ class SettingsWindow: NSWindow {
         guard let contentView = self.contentView else { return }
         contentView.wantsLayer = true
 
-        // Version label
+        // =====================================================================
+        // Version label (bottom-right)
+        // =====================================================================
         let versionLabel = NSTextField(labelWithString: "Snipshot v\(kSnipshotVersion)")
         versionLabel.font = .systemFont(ofSize: 11, weight: .regular)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(versionLabel)
 
-        // Hotkey section title
+        // =====================================================================
+        // Section 1: Capture Hotkey
+        // =====================================================================
         let hotkeyTitle = NSTextField(labelWithString: "Capture Hotkey")
         hotkeyTitle.font = .systemFont(ofSize: 13, weight: .semibold)
         hotkeyTitle.textColor = .labelColor
         hotkeyTitle.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(hotkeyTitle)
 
-        // Hotkey recorder
         hotkeyField = HotkeyRecorderField(config: currentConfig)
         hotkeyField.translatesAutoresizingMaskIntoConstraints = false
         hotkeyField.onConfigChanged = { [weak self] newConfig in
             self?.currentConfig = newConfig
-            // Save to UserDefaults
             UserDefaults.standard.set(newConfig.keyCode, forKey: "captureHotkeyKeyCode")
             UserDefaults.standard.set(newConfig.modifiers.rawValue, forKey: "captureHotkeyModifiers")
             self?.onHotkeyChanged?(newConfig)
         }
         contentView.addSubview(hotkeyField)
 
-        // Reset button
         let resetButton = NSButton(title: "Reset to Default (F1)", target: self, action: #selector(resetHotkey))
         resetButton.bezelStyle = .rounded
         resetButton.controlSize = .regular
         resetButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(resetButton)
 
-        // --- Separator ---
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(separator)
+        // =====================================================================
+        // Separator 1
+        // =====================================================================
+        let separator1 = NSBox()
+        separator1.boxType = .separator
+        separator1.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(separator1)
 
-        // --- Debug section ---
-        let debugTitle = NSTextField(labelWithString: "Debug")
-        debugTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        debugTitle.textColor = .labelColor
-        debugTitle.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(debugTitle)
+        // =====================================================================
+        // Section 2: General Settings
+        // =====================================================================
+        let generalTitle = NSTextField(labelWithString: "General")
+        generalTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        generalTitle.textColor = .labelColor
+        generalTitle.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(generalTitle)
 
-        // Always show onboarding checkbox
+        // Auto-copy toggle
+        let autoCopyCheckbox = NSButton(checkboxWithTitle: "Auto-copy after selection",
+                                         target: self, action: #selector(toggleAutoCopy(_:)))
+        autoCopyCheckbox.state = UserDefaults.standard.bool(forKey: "autoCopyAfterSelection") ? .on : .off
+        autoCopyCheckbox.controlSize = .regular
+        autoCopyCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(autoCopyCheckbox)
+
+        let autoCopyDesc = NSTextField(labelWithString: "Automatically copy selection to clipboard when area is selected")
+        autoCopyDesc.font = .systemFont(ofSize: 11, weight: .regular)
+        autoCopyDesc.textColor = .secondaryLabelColor
+        autoCopyDesc.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(autoCopyDesc)
+
+        // Launch at login toggle
+        let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login",
+                                              target: self, action: #selector(toggleLaunchAtLogin(_:)))
+        launchAtLoginCheckbox.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        launchAtLoginCheckbox.controlSize = .regular
+        launchAtLoginCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(launchAtLoginCheckbox)
+
+        let launchDesc = NSTextField(labelWithString: "Start Snipshot automatically when you log in")
+        launchDesc.font = .systemFont(ofSize: 11, weight: .regular)
+        launchDesc.textColor = .secondaryLabelColor
+        launchDesc.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(launchDesc)
+
+        // =====================================================================
+        // Separator 2 (before debug)
+        // =====================================================================
+        let separator2 = NSBox()
+        separator2.boxType = .separator
+        separator2.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(separator2)
+
+        // =====================================================================
+        // Section 3: Debug (collapsible, subtle entry)
+        // =====================================================================
+        // Use a small clickable text button as the disclosure trigger
+        debugDisclosureButton = NSButton(title: "Debug ▶", target: self, action: #selector(toggleDebugSection))
+        debugDisclosureButton.bezelStyle = .inline
+        debugDisclosureButton.isBordered = false
+        debugDisclosureButton.font = .systemFont(ofSize: 11, weight: .regular)
+        debugDisclosureButton.contentTintColor = .tertiaryLabelColor
+        debugDisclosureButton.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(debugDisclosureButton)
+
+        // Debug content views (initially hidden)
         let onboardingCheckbox = NSButton(checkboxWithTitle: "Always show onboarding on launch",
                                           target: self, action: #selector(toggleAlwaysOnboarding(_:)))
         onboardingCheckbox.state = UserDefaults.standard.bool(forKey: "debugAlwaysShowOnboarding") ? .on : .off
@@ -137,14 +200,12 @@ class SettingsWindow: NSWindow {
         onboardingCheckbox.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(onboardingCheckbox)
 
-        // Show onboarding now button
         let showNowButton = NSButton(title: "Show Onboarding Now", target: self, action: #selector(showOnboardingNow))
         showNowButton.bezelStyle = .rounded
         showNowButton.controlSize = .regular
         showNowButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(showNowButton)
 
-        // Reset everything & quit button
         let resetAllButton = NSButton(title: "Reset Everything & Quit", target: self, action: #selector(resetEverythingAndQuit))
         resetAllButton.bezelStyle = .rounded
         resetAllButton.controlSize = .regular
@@ -152,38 +213,130 @@ class SettingsWindow: NSWindow {
         resetAllButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(resetAllButton)
 
+        debugContentViews = [onboardingCheckbox, showNowButton, resetAllButton]
+
+        // =====================================================================
+        // Layout
+        // =====================================================================
+        let margin: CGFloat = 24
+        let sectionGap: CGFloat = 16
+        let itemGap: CGFloat = 8
+        let descGap: CGFloat = 2
+
         NSLayoutConstraint.activate([
-            hotkeyTitle.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
-            hotkeyTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            // Hotkey section
+            hotkeyTitle.topAnchor.constraint(equalTo: contentView.topAnchor, constant: margin),
+            hotkeyTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
 
             hotkeyField.centerYAnchor.constraint(equalTo: hotkeyTitle.centerYAnchor),
             hotkeyField.leadingAnchor.constraint(equalTo: hotkeyTitle.trailingAnchor, constant: 16),
-            hotkeyField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            hotkeyField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
             hotkeyField.heightAnchor.constraint(equalToConstant: 28),
 
-            resetButton.topAnchor.constraint(equalTo: hotkeyTitle.bottomAnchor, constant: 20),
-            resetButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            resetButton.topAnchor.constraint(equalTo: hotkeyTitle.bottomAnchor, constant: sectionGap),
+            resetButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
 
-            separator.topAnchor.constraint(equalTo: resetButton.bottomAnchor, constant: 20),
-            separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-            separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            // Separator 1
+            separator1.topAnchor.constraint(equalTo: resetButton.bottomAnchor, constant: sectionGap),
+            separator1.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            separator1.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
 
-            debugTitle.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 16),
-            debugTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            // General section title
+            generalTitle.topAnchor.constraint(equalTo: separator1.bottomAnchor, constant: sectionGap),
+            generalTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
 
-            onboardingCheckbox.topAnchor.constraint(equalTo: debugTitle.bottomAnchor, constant: 10),
-            onboardingCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            // Auto-copy checkbox
+            autoCopyCheckbox.topAnchor.constraint(equalTo: generalTitle.bottomAnchor, constant: itemGap),
+            autoCopyCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
 
-            showNowButton.topAnchor.constraint(equalTo: onboardingCheckbox.bottomAnchor, constant: 12),
-            showNowButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            autoCopyDesc.topAnchor.constraint(equalTo: autoCopyCheckbox.bottomAnchor, constant: descGap),
+            autoCopyDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin + 18),
 
-            resetAllButton.topAnchor.constraint(equalTo: showNowButton.bottomAnchor, constant: 12),
-            resetAllButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            // Launch at login checkbox
+            launchAtLoginCheckbox.topAnchor.constraint(equalTo: autoCopyDesc.bottomAnchor, constant: itemGap + 4),
+            launchAtLoginCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
 
-            versionLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
-            versionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            launchDesc.topAnchor.constraint(equalTo: launchAtLoginCheckbox.bottomAnchor, constant: descGap),
+            launchDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin + 18),
+
+            // Separator 2
+            separator2.topAnchor.constraint(equalTo: launchDesc.bottomAnchor, constant: sectionGap),
+            separator2.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            separator2.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
+
+            // Debug disclosure button (subtle, small)
+            debugDisclosureButton.topAnchor.constraint(equalTo: separator2.bottomAnchor, constant: 10),
+            debugDisclosureButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            // Debug content (initially hidden via constraints)
+            onboardingCheckbox.topAnchor.constraint(equalTo: debugDisclosureButton.bottomAnchor, constant: itemGap),
+            onboardingCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            showNowButton.topAnchor.constraint(equalTo: onboardingCheckbox.bottomAnchor, constant: itemGap),
+            showNowButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            resetAllButton.topAnchor.constraint(equalTo: showNowButton.bottomAnchor, constant: itemGap),
+            resetAllButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            // Version label
+            versionLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            versionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
         ])
+
+        // Start with debug section collapsed
+        setDebugExpanded(false, animate: false)
     }
+
+    // MARK: - Debug Section Collapse/Expand
+
+    private func setDebugExpanded(_ expanded: Bool, animate: Bool) {
+        debugIsExpanded = expanded
+
+        if expanded {
+            debugDisclosureButton.title = "Debug ▼"
+        } else {
+            debugDisclosureButton.title = "Debug ▶"
+        }
+
+        let alpha: CGFloat = expanded ? 1.0 : 0.0
+
+        if animate {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.allowsImplicitAnimation = true
+                for view in debugContentViews {
+                    view.animator().alphaValue = alpha
+                    view.isHidden = !expanded
+                }
+                // Resize window
+                self.adjustWindowHeight(expanded: expanded)
+            }
+        } else {
+            for view in debugContentViews {
+                view.alphaValue = alpha
+                view.isHidden = !expanded
+            }
+            adjustWindowHeight(expanded: expanded)
+        }
+    }
+
+    private func adjustWindowHeight(expanded: Bool) {
+        let collapsedHeight: CGFloat = 330
+        let expandedHeight: CGFloat = 440
+        let targetHeight = expanded ? expandedHeight : collapsedHeight
+
+        var frame = self.frame
+        let delta = targetHeight - frame.height
+        frame.origin.y -= delta
+        frame.size.height = targetHeight
+        self.setFrame(frame, display: true, animate: true)
+    }
+
+    @objc private func toggleDebugSection() {
+        setDebugExpanded(!debugIsExpanded, animate: true)
+    }
+
+    // MARK: - Actions
 
     @objc private func resetHotkey() {
         let defaultConfig = HotkeyConfig.defaultCapture
@@ -192,6 +345,29 @@ class SettingsWindow: NSWindow {
         UserDefaults.standard.set(defaultConfig.keyCode, forKey: "captureHotkeyKeyCode")
         UserDefaults.standard.set(defaultConfig.modifiers.rawValue, forKey: "captureHotkeyModifiers")
         onHotkeyChanged?(defaultConfig)
+    }
+
+    @objc private func toggleAutoCopy(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        UserDefaults.standard.set(enabled, forKey: "autoCopyAfterSelection")
+        logMessage("Auto-copy after selection = \(enabled)")
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+                logMessage("Launch at login: registered")
+            } else {
+                try SMAppService.mainApp.unregister()
+                logMessage("Launch at login: unregistered")
+            }
+        } catch {
+            logMessage("Launch at login error: \(error.localizedDescription)")
+            // Revert checkbox state on failure
+            sender.state = enabled ? .off : .on
+        }
     }
 
     @objc private func toggleAlwaysOnboarding(_ sender: NSButton) {
@@ -214,6 +390,8 @@ class SettingsWindow: NSWindow {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
+            // Unregister login item before reset
+            try? SMAppService.mainApp.unregister()
             // Remove all UserDefaults for this app
             if let bundleId = Bundle.main.bundleIdentifier {
                 UserDefaults.standard.removePersistentDomain(forName: bundleId)

@@ -18,7 +18,9 @@
 | `Snipshot/AppDelegate.swift` | App lifecycle, hotkeys (`CGEvent.tapCreate`), screen capture (`CGWindowListCreateImage`), pin windows |
 | `build.sh` | Build script: `./build.sh` (dev, self-signed) or `./build.sh prod` (Developer ID + notarize + DMG) |
 | `setup_signing.sh` | Create Developer ID Application certificate via App Store Connect API |
-| `keys/` | API key (.p8) and certificates — **gitignored, never commit** |
+| `keys/` | API key (.p8), certificates, and Sparkle EdDSA private key (`sparkle_private_key.pem`) — **gitignored, never commit** |
+| `release.sh` | Publish script: `./release.sh` to sign DMG, create GitHub Release, and generate/upload `appcast.xml` via `gh` CLI |
+| `vendor/` | Third-party dependencies like `Sparkle.framework` (downloaded by `build.sh`) — **gitignored** |
 
 ## 3. Architecture Notes
 
@@ -30,6 +32,8 @@
 - **Toolbar Positioning**: `panelYPosition()` tries below selection, then above, then inside (fullscreen fallback).
 - **TCC Permissions**: Self-signed cert "Snipshot Dev" keeps permissions stable across rebuilds.
 - **Build Modes**: `./build.sh` or `./build.sh dev` uses self-signed cert (fast, for development). `./build.sh prod` uses Developer ID Application cert with hardened runtime, creates DMG, submits for notarization, and staples the ticket. Prod notarization can take 5-15 min.
+- **Auto-Update (Sparkle)**: Snipshot uses Sparkle 2 for automatic updates via GitHub Releases. The `SUFeedURL` in `Info.plist` points to `appcast.xml` in the `latest` GitHub Release. `build.sh` automatically downloads `Sparkle.framework`, links it, and signs its components inside-out.
+- **Publishing Flow**: To publish a new version: 1) Update version in `Info.plist` and `SettingsWindow.swift`. 2) Run `./build.sh prod`. 3) Run `./release.sh`. The release script signs the DMG with the Sparkle EdDSA private key, creates a GitHub Release using `gh` CLI, and updates `appcast.xml`.
 
 ## 4. Keyboard Shortcuts
 

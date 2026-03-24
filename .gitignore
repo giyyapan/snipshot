@@ -1,14 +1,13 @@
 # Build output
 build/
-
 # Signing keys (NEVER commit)
 keys/
-
+# Sparkle framework (downloaded at build time)
+vendor/
 # macOS
 .DS_Store
 *.swp
 *~
-
 # Debug logs
 snapping_debug.log
 sync.sh

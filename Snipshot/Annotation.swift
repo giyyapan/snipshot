@@ -472,7 +472,7 @@ class AnnotationRenderer {
             CGFloat($0.pixelsWide) / screenshot.size.width
         } ?? 2.0
 
-        let screenHeight = NSScreen.main?.frame.height ?? 1080
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 1080
 
         let imgRect = NSRect(
             x: screenRect.origin.x * scale,

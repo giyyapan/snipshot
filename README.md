@@ -49,6 +49,7 @@ Snipshot/
 │   └── main.swift             # Entry point
 ├── docs/              # Design docs and research
 ├── build.sh           # Build script (swiftc + codesign)
+├── release.sh         # Publish script (Sparkle + GitHub Releases)
 ├── setup_cert.sh      # Self-signed certificate setup
 └── AGENTS.md          # AI agent guidelines
 ```
@@ -64,5 +65,20 @@ pkill -f Snipshot; sleep 1; open build/Snipshot.app
 ```
 
 The self-signed certificate ("Snipshot Dev") keeps Screen Recording and Accessibility permissions stable across rebuilds. If permissions break, re-run `setup_cert.sh` and re-grant in System Settings > Privacy & Security.
+
+## Publishing Updates
+
+Snipshot uses **Sparkle** for automatic updates via GitHub Releases. To publish a new version:
+
+1. Update the version number in `Snipshot/Info.plist` and `Snipshot/SettingsWindow.swift`.
+2. Build the production DMG:
+   ```bash
+   bash build.sh prod
+   ```
+3. Publish to GitHub Releases (requires `gh` CLI and Sparkle EdDSA private key):
+   ```bash
+   bash release.sh
+   ```
+   This will sign the DMG, create a GitHub Release, and update the `appcast.xml` feed automatically.
 
 See `docs/` for architecture details and `AGENTS.md` for AI-assisted development guidelines.

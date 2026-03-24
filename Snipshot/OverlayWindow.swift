@@ -114,6 +114,10 @@ class OverlayView: NSView {
     var ocrPanelView: NSView?
     let imageAnalyzer = ImageAnalyzer()
 
+    // Auto-copy: when enabled, selection completion auto-copies to clipboard
+    var autoCopyEnabled: Bool = UserDefaults.standard.bool(forKey: "autoCopyAfterSelection")
+    private var hasAutoCopied: Bool = false
+
     // Color picker (idle mode)
     enum ColorFormat: Int, CaseIterable {
         case hex = 0, rgb, hsl
@@ -351,11 +355,28 @@ class OverlayView: NSView {
         }
     }
 
+    // MARK: - Auto-Copy
+    /// Automatically copy the current selection to clipboard if auto-copy is enabled.
+    func autoCopyIfEnabled() {
+        guard autoCopyEnabled, hasSelection else { return }
+        if let image = cropImage() {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.writeObjects([image])
+            hasAutoCopied = true
+            logMessage("Auto-copy: selection copied to clipboard.")
+        }
+    }
+
     // MARK: - Actions
     enum ActionType { case copy, save, pin, cancel }
 
     func performAction(_ type: ActionType) {
         if type == .cancel {
+            // When auto-copy is enabled and we have a selection, copy before cancelling
+            if autoCopyEnabled && hasSelection && !hasAutoCopied {
+                autoCopyIfEnabled()
+            }
             onAction(.cancel)
             return
         }
@@ -1045,10 +1066,12 @@ class OverlayView: NSView {
         case .drawing:
             if hasSelection {
                 mode = .selected; showAllPanels()
+                autoCopyIfEnabled()
             } else if let winFrame = windowFrameAt(point: drawStart) {
                 // Click without drag: snap selection to the window under cursor
                 selectionRect = winFrame
                 mode = .selected; showAllPanels()
+                autoCopyIfEnabled()
             } else {
                 mode = .idle; selectionRect = .zero
             }
@@ -1154,8 +1177,8 @@ class OverlayView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        if mode == .ocrMode { exitOCRMode() }
-        onAction(.cancel)
+        // Right-click is intentionally disabled for cancellation.
+        // Use ESC key to cancel instead.
     }
 
     // MARK: - Scroll Wheel / Pinch (adjust stroke width)
@@ -1229,6 +1252,10 @@ class OverlayView: NSView {
         }
 
         if event.keyCode == 53 { // Escape
+            // When auto-copy is enabled and we have a selection, copy before cancelling
+            if autoCopyEnabled && hasSelection && !hasAutoCopied {
+                autoCopyIfEnabled()
+            }
             onAction(.cancel)
         } else if event.keyCode == 36 { // Enter
             if mode == .selected || mode == .annotating { performAction(.copy) }

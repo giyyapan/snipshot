@@ -16,6 +16,7 @@ APP_BUNDLE="$BUILD_DIR/Snipshot.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
+FRAMEWORKS="$CONTENTS/Frameworks"
 
 BUILD_MODE="${1:-dev}"
 
@@ -26,6 +27,12 @@ API_ISSUER_ID="cee32055-ad0c-4658-aba5-e22215d14fef"
 TEAM_ID="AN68AMD3JC"
 API_KEY_FILE="$KEYS_DIR/AuthKey_${API_KEY_ID}.p8"
 BUNDLE_ID="com.giyyapan.snipshot"
+
+# --- Sparkle ---
+VENDOR_DIR="$PROJECT_DIR/vendor"
+SPARKLE_FRAMEWORK="$VENDOR_DIR/Sparkle.framework"
+SPARKLE_VERSION="2.9.0"
+SPARKLE_URL="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
 
 if [ "$BUILD_MODE" = "prod" ]; then
     SIGN_IDENTITY="Developer ID Application"
@@ -38,18 +45,33 @@ else
 fi
 
 # =============================================================================
+# Step 0: Ensure Sparkle.framework is available
+# =============================================================================
+if [ ! -d "$SPARKLE_FRAMEWORK" ]; then
+    echo "Downloading Sparkle ${SPARKLE_VERSION}..."
+    mkdir -p "$VENDOR_DIR"
+    curl -L -o "$VENDOR_DIR/Sparkle-${SPARKLE_VERSION}.tar.xz" "$SPARKLE_URL"
+    (cd "$VENDOR_DIR" && tar xf "Sparkle-${SPARKLE_VERSION}.tar.xz")
+    echo "  Sparkle downloaded and extracted."
+fi
+
+# =============================================================================
 # Step 1: Compile
 # =============================================================================
-mkdir -p "$MACOS" "$RESOURCES"
+mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
 
 echo "Compiling ($( [ "$BUILD_MODE" = "prod" ] && echo "optimized" || echo "debug" ))..."
 swiftc \
     $SWIFT_OPT \
     -target arm64-apple-macosx14.0 \
     -sdk "$(xcrun --show-sdk-path)" \
+    -F "$VENDOR_DIR" \
     -framework Cocoa \
     -framework Carbon \
     -framework VisionKit \
+    -framework ServiceManagement \
+    -framework Sparkle \
+    -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     "$PROJECT_DIR/Snipshot/main.swift" \
     "$PROJECT_DIR/Snipshot/AppDelegate.swift" \
     "$PROJECT_DIR/Snipshot/UIComponents.swift" \
@@ -66,6 +88,18 @@ swiftc \
 cp "$PROJECT_DIR/Snipshot/Info.plist" "$CONTENTS/Info.plist"
 cp "$PROJECT_DIR/Snipshot/Snipshot.entitlements" "$RESOURCES/Snipshot.entitlements"
 cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES/AppIcon.icns"
+
+# =============================================================================
+# Step 1.5: Embed Sparkle.framework
+# =============================================================================
+echo "Embedding Sparkle.framework..."
+# Remove old copy if exists
+rm -rf "$FRAMEWORKS/Sparkle.framework"
+# Copy framework
+cp -R "$SPARKLE_FRAMEWORK" "$FRAMEWORKS/"
+# For non-sandboxed apps, XPCServices are not needed (saves ~2MB)
+rm -rf "$FRAMEWORKS/Sparkle.framework/XPCServices"
+rm -rf "$FRAMEWORKS/Sparkle.framework/Versions/B/XPCServices"
 
 # =============================================================================
 # Step 2: Code sign
@@ -88,13 +122,33 @@ if [ "$BUILD_MODE" = "prod" ]; then
     fi
 
     echo "  Using: $FULL_IDENTITY"
+
+    # Sign Sparkle components individually first (inside-out signing)
+    echo "  Signing Sparkle components..."
+    codesign --force --options runtime --timestamp \
+        --sign "$FULL_IDENTITY" \
+        "$FRAMEWORKS/Sparkle.framework/Versions/B/Autoupdate"
+    codesign --force --options runtime --timestamp \
+        --sign "$FULL_IDENTITY" \
+        "$FRAMEWORKS/Sparkle.framework/Versions/B/Updater.app"
+    codesign --force --options runtime --timestamp \
+        --sign "$FULL_IDENTITY" \
+        "$FRAMEWORKS/Sparkle.framework"
+
+    # Sign the main app bundle
     codesign --force --deep --options runtime --timestamp \
         --sign "$FULL_IDENTITY" \
         --entitlements "$PROJECT_DIR/Snipshot/Snipshot.entitlements" \
         "$APP_BUNDLE"
 else
-    # Dev: simple self-signed
+    # Dev: simple self-signed — sign Sparkle first, then the app
     codesign --force --sign "$SIGN_IDENTITY" \
+        "$FRAMEWORKS/Sparkle.framework/Versions/B/Autoupdate"
+    codesign --force --sign "$SIGN_IDENTITY" \
+        "$FRAMEWORKS/Sparkle.framework/Versions/B/Updater.app"
+    codesign --force --sign "$SIGN_IDENTITY" \
+        "$FRAMEWORKS/Sparkle.framework"
+    codesign --force --deep --sign "$SIGN_IDENTITY" \
         --entitlements "$PROJECT_DIR/Snipshot/Snipshot.entitlements" \
         "$APP_BUNDLE"
 fi
@@ -174,3 +228,4 @@ echo "  Signed by: $FULL_IDENTITY"
 echo "  Notarized & stapled: ✓"
 echo ""
 echo "  This DMG can be distributed to anyone."
+echo "  To publish an update, run: ./release.sh $VERSION"

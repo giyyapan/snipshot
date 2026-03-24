@@ -2,6 +2,7 @@ import Cocoa
 import Carbon.HIToolbox
 import os.log
 import UniformTypeIdentifiers
+import Sparkle
 
 private let logger = Logger(subsystem: "com.giyyapan.snipshot", category: "main")
 
@@ -36,6 +37,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var onboardingWindow: OnboardingWindow?
     var isCapturing = false
     private var captureHotkey: HotkeyConfig = HotkeyConfig.defaultCapture
+
+    // MARK: - Sparkle Auto-Update
+    private let updaterController: SPUStandardUpdaterController
+
+    override init() {
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        super.init()
+    }
 
     // MARK: - App Lifecycle
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -88,6 +101,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateStatusMenu() {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Capture (\(captureHotkey.displayString))", action: #selector(startCapture), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+
+        // Check for Updates menu item
+        let checkForUpdatesItem = NSMenuItem(title: "Check for Updates...", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+        checkForUpdatesItem.target = updaterController
+        menu.addItem(checkForUpdatesItem)
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit Snipshot", action: #selector(quitApp), keyEquivalent: "q"))
@@ -255,7 +275,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Use CGWindowListCreateImage instead of ScreenCaptureKit to avoid stealing focus.
         // SCScreenshotManager.captureImage activates the app, causing other windows to lose
         // their focused shadow. CGWindowListCreateImage does not have this side effect.
-        let mainHeight = NSScreen.screens.map { $0.frame.maxY }.max() ?? screen.frame.height
+        let mainHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
         let cgRect = CGRect(
             x: screen.frame.origin.x,
             y: mainHeight - screen.frame.origin.y - screen.frame.height,
