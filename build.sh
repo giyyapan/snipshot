@@ -228,4 +228,10 @@ echo "  Signed by: $FULL_IDENTITY"
 echo "  Notarized & stapled: ✓"
 echo ""
 echo "  This DMG can be distributed to anyone."
-echo "  To publish an update, run: ./release.sh $VERSION"
+
+# =============================================================================
+# Step 6 (prod): Publish to GitHub Releases via release.sh
+# =============================================================================
+echo ""
+echo "Publishing to GitHub Releases..."
+bash "$PROJECT_DIR/release.sh" "$VERSION"

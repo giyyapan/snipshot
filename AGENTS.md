@@ -33,7 +33,7 @@
 - **TCC Permissions**: Self-signed cert "Snipshot Dev" keeps permissions stable across rebuilds.
 - **Build Modes**: `./build.sh` or `./build.sh dev` uses self-signed cert (fast, for development). `./build.sh prod` uses Developer ID Application cert with hardened runtime, creates DMG, submits for notarization, and staples the ticket. Prod notarization can take 5-15 min.
 - **Auto-Update (Sparkle)**: Snipshot uses Sparkle 2 for automatic updates via GitHub Releases. The `SUFeedURL` in `Info.plist` points to `appcast.xml` in the `latest` GitHub Release. `build.sh` automatically downloads `Sparkle.framework`, links it, and signs its components inside-out.
-- **Publishing Flow**: To publish a new version: 1) Update version in `Info.plist` and `SettingsWindow.swift`. 2) Run `./build.sh prod`. 3) Run `./release.sh`. The release script signs the DMG with the Sparkle EdDSA private key, creates a GitHub Release using `gh` CLI, and updates `appcast.xml`.
+- **Publishing Flow**: To publish a new version: 1) Update version in `Info.plist` and `SettingsWindow.swift`. 2) Run `./build.sh prod`. The build script automatically calls `release.sh` after notarization, which signs the DMG with the Sparkle EdDSA private key, creates a GitHub Release using `gh` CLI, and updates `appcast.xml`. You can also run `./release.sh` separately if needed.
 
 ## 4. Keyboard Shortcuts
 

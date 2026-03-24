@@ -71,14 +71,10 @@ The self-signed certificate ("Snipshot Dev") keeps Screen Recording and Accessib
 Snipshot uses **Sparkle** for automatic updates via GitHub Releases. To publish a new version:
 
 1. Update the version number in `Snipshot/Info.plist` and `Snipshot/SettingsWindow.swift`.
-2. Build the production DMG:
+2. Build and publish:
    ```bash
    bash build.sh prod
    ```
-3. Publish to GitHub Releases (requires `gh` CLI and Sparkle EdDSA private key):
-   ```bash
-   bash release.sh
-   ```
-   This will sign the DMG, create a GitHub Release, and update the `appcast.xml` feed automatically.
+   This will compile, sign, notarize, create a DMG, and automatically publish to GitHub Releases with the Sparkle `appcast.xml` feed. Requires `gh` CLI and Sparkle EdDSA private key in `keys/`.
 
 See `docs/` for architecture details and `AGENTS.md` for AI-assisted development guidelines.
