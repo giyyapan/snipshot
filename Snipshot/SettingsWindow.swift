@@ -2,7 +2,7 @@ import Cocoa
 import Carbon.HIToolbox
 import ServiceManagement
 
-let kSnipshotVersion = "0.3.0"
+let kSnipshotVersion = "0.4.0"
 
 // MARK: - Hotkey Configuration
 
@@ -101,6 +101,12 @@ class SettingsWindow: NSWindow {
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(versionLabel)
+
+        let authorLabel = NSTextField(labelWithString: "by giyyapan")
+        authorLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        authorLabel.textColor = .tertiaryLabelColor
+        authorLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(authorLabel)
 
         // =====================================================================
         // Section 1: Capture Hotkey
@@ -278,9 +284,12 @@ class SettingsWindow: NSWindow {
             resetAllButton.topAnchor.constraint(equalTo: showNowButton.bottomAnchor, constant: itemGap),
             resetAllButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
 
-            // Version label
-            versionLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            // Version + author labels
+            versionLabel.bottomAnchor.constraint(equalTo: authorLabel.topAnchor, constant: -2),
             versionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
+
+            authorLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            authorLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
         ])
 
         // Start with debug section collapsed

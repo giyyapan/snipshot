@@ -17,7 +17,7 @@
 | `Snipshot/UIComponents.swift` | Reusable UI: `HoverIconButton`, `SmallButton`, `ColorDot` |
 | `Snipshot/OCRMode.swift` | OCR (Live Text) mode using VisionKit |
 | `Snipshot/AppDelegate.swift` | App lifecycle, hotkeys (`CGEvent.tapCreate`), screen capture (`CGWindowListCreateImage`), pin windows |
-| `build.sh` | Build script: `./build.sh` (dev, self-signed) or `./build.sh prod` (Developer ID + notarize + DMG) |
+| `build.sh` | Build script: `./build.sh` (build), `./build.sh notarize` (+ DMG + notarize), `./build.sh release` (+ publish) |
 | `setup_signing.sh` | Create Developer ID Application certificate via App Store Connect API |
 | `keys/` | API key (.p8), certificates, and Sparkle EdDSA private key (`sparkle_private_key.pem`) — **gitignored, never commit** |
 | `release.sh` | Publish script: `./release.sh` to sign DMG, create GitHub Release, and generate/upload `appcast.xml` via `gh` CLI |
@@ -31,10 +31,10 @@
 - **Window Snapping**: Two-pass algorithm in `cacheWindowFrames`. Pass 1: collect layer-0 windows, clip to screen bounds. Pass 2: four-corner visibility check filters out occluded windows. `windowFrameAt` returns first Z-order match. Idle mode shows highlight + click-to-select.
 - **Multi-Monitor**: Overlay follows mouse between screens in idle mode (re-captures via `onScreenChange` callback to `AppDelegate`).
 - **Toolbar Positioning**: `panelYPosition()` tries below selection, then above, then inside (fullscreen fallback).
-- **TCC Permissions**: Both dev and prod builds use the same Developer ID Application certificate, so Screen Recording and Accessibility permissions persist across all builds.
-- **Build Modes**: `./build.sh` or `./build.sh dev` uses Developer ID Application cert (fast, no notarization). `./build.sh prod` uses the same cert with hardened runtime, creates DMG, submits for notarization, staples the ticket, and auto-publishes to GitHub Releases. Prod notarization can take 5-15 min.
+- **TCC Permissions**: All builds use the same Developer ID Application certificate with hardened runtime, so Screen Recording and Accessibility permissions persist across rebuilds.
+- **Build Modes**: `./build.sh` compiles and signs (daily development). `./build.sh notarize` also creates a DMG, submits for notarization, and staples the ticket. `./build.sh release` does everything including publishing to GitHub Releases via `release.sh`. Notarization can take 5-15 min.
 - **Auto-Update (Sparkle)**: Snipshot uses Sparkle 2 for automatic updates via GitHub Releases. The `SUFeedURL` in `Info.plist` points to `appcast.xml` in the `latest` GitHub Release. `build.sh` automatically downloads `Sparkle.framework`, links it, and signs its components inside-out.
-- **Publishing Flow**: To publish a new version: 1) Update version in `Info.plist` and `SettingsWindow.swift`. 2) Run `./build.sh prod`. The build script automatically calls `release.sh` after notarization, which signs the DMG with the Sparkle EdDSA private key, creates a GitHub Release using `gh` CLI, and updates `appcast.xml`. You can also run `./release.sh` separately if needed.
+- **Publishing Flow**: To publish a new version: 1) Update version in `Info.plist` and `SettingsWindow.swift`. 2) `./build.sh` to test locally. 3) `./build.sh notarize` to verify notarization passes. 4) `./build.sh release` to publish. The release step calls `release.sh`, which signs the DMG with the Sparkle EdDSA private key, creates a GitHub Release, and updates `appcast.xml`.
 
 ## 4. Keyboard Shortcuts
 

@@ -5,9 +5,9 @@ set -e
 # build.sh — Build Snipshot
 #
 # Usage:
-#   ./build.sh              Dev build (Developer ID, no notarization)
-#   ./build.sh dev          Same as above
-#   ./build.sh prod         Prod build (Developer ID + notarize + DMG + publish)
+#   ./build.sh              Build only (Developer ID signed, hardened runtime)
+#   ./build.sh notarize     Build + create DMG + notarize + staple
+#   ./build.sh release      Build + notarize + publish to GitHub Releases
 # =============================================================================
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,9 +18,9 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 FRAMEWORKS="$CONTENTS/Frameworks"
 
-BUILD_MODE="${1:-dev}"
+BUILD_MODE="${1:-build}"
 
-# --- Configuration per mode ---
+# --- Configuration ---
 KEYS_DIR="$PROJECT_DIR/keys"
 API_KEY_ID="F34YUX6BRT"
 API_ISSUER_ID="cee32055-ad0c-4658-aba5-e22215d14fef"
@@ -34,17 +34,18 @@ SPARKLE_FRAMEWORK="$VENDOR_DIR/Sparkle.framework"
 SPARKLE_VERSION="2.9.0"
 SPARKLE_URL="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
 
-# Both dev and prod use Developer ID Application for consistent TCC permissions
-# (Screen Recording, Accessibility grants survive dev↔prod switches)
+# All modes use Developer ID Application for consistent TCC permissions
 SIGN_IDENTITY="Developer ID Application"
 
-if [ "$BUILD_MODE" = "prod" ]; then
-    SWIFT_OPT="-O"
-    echo "=== Building Snipshot (PROD) ==="
-else
-    SWIFT_OPT="-Onone"
-    echo "=== Building Snipshot (DEV) ==="
-fi
+case "$BUILD_MODE" in
+    build)     echo "=== Building Snipshot ===" ;;
+    notarize)  echo "=== Building Snipshot (+ notarize) ===" ;;
+    release)   echo "=== Building Snipshot (+ notarize + release) ===" ;;
+    *)
+        echo "Usage: ./build.sh [build|notarize|release]"
+        exit 1
+        ;;
+esac
 
 # =============================================================================
 # Step 0: Ensure Sparkle.framework is available
@@ -62,9 +63,9 @@ fi
 # =============================================================================
 mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
 
-echo "Compiling ($( [ "$BUILD_MODE" = "prod" ] && echo "optimized" || echo "debug" ))..."
+echo "Compiling..."
 swiftc \
-    $SWIFT_OPT \
+    -O \
     -target arm64-apple-macosx14.0 \
     -sdk "$(xcrun --show-sdk-path)" \
     -F "$VENDOR_DIR" \
@@ -95,18 +96,15 @@ cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 # Step 1.5: Embed Sparkle.framework
 # =============================================================================
 echo "Embedding Sparkle.framework..."
-# Remove old copy if exists
 rm -rf "$FRAMEWORKS/Sparkle.framework"
-# Copy framework
 cp -R "$SPARKLE_FRAMEWORK" "$FRAMEWORKS/"
 # For non-sandboxed apps, XPCServices are not needed (saves ~2MB)
 rm -rf "$FRAMEWORKS/Sparkle.framework/XPCServices"
 rm -rf "$FRAMEWORKS/Sparkle.framework/Versions/B/XPCServices"
 
 # =============================================================================
-# Step 2: Code sign
+# Step 2: Code sign (Developer ID + hardened runtime for all modes)
 # =============================================================================
-# Resolve the full Developer ID Application identity
 FULL_IDENTITY=$(security find-identity -p codesigning -v \
     | grep "Developer ID Application" \
     | grep -v "CSSMERR_TP_NOT_TRUSTED" \
@@ -122,52 +120,50 @@ fi
 
 echo "Signing with '$FULL_IDENTITY'..."
 
-if [ "$BUILD_MODE" = "prod" ]; then
-    # Prod: hardened runtime + timestamp (required for notarization)
-    CODESIGN_FLAGS="--options runtime --timestamp"
-else
-    # Dev: same identity, no hardened runtime (faster, allows debugging)
-    CODESIGN_FLAGS=""
-fi
-
 # Sign Sparkle components individually first (inside-out signing)
 echo "  Signing Sparkle components..."
-codesign --force $CODESIGN_FLAGS \
+codesign --force --options runtime --timestamp \
     --sign "$FULL_IDENTITY" \
     "$FRAMEWORKS/Sparkle.framework/Versions/B/Autoupdate"
-codesign --force $CODESIGN_FLAGS \
+codesign --force --options runtime --timestamp \
     --sign "$FULL_IDENTITY" \
     "$FRAMEWORKS/Sparkle.framework/Versions/B/Updater.app"
-codesign --force $CODESIGN_FLAGS \
+codesign --force --options runtime --timestamp \
     --sign "$FULL_IDENTITY" \
     "$FRAMEWORKS/Sparkle.framework"
 
 # Sign the main app bundle
-codesign --force --deep $CODESIGN_FLAGS \
+codesign --force --deep --options runtime --timestamp \
     --sign "$FULL_IDENTITY" \
     --entitlements "$PROJECT_DIR/Snipshot/Snipshot.entitlements" \
     "$APP_BUNDLE"
 
 echo "Signing complete."
 
+VERSION=$(defaults read "$CONTENTS/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "0.1.0")
+
 # =============================================================================
-# Dev mode: done here
+# Build-only mode: done here
 # =============================================================================
-if [ "$BUILD_MODE" != "prod" ]; then
+if [ "$BUILD_MODE" = "build" ]; then
     echo ""
-    echo "=== Dev build complete: $APP_BUNDLE ==="
-    echo "To run: open $APP_BUNDLE"
+    echo "=== Build complete: $APP_BUNDLE (v${VERSION}) ==="
+    echo "  Signed by: $FULL_IDENTITY"
+    echo "  To run: open $APP_BUNDLE"
+    echo ""
+    echo "  Next steps:"
+    echo "    ./build.sh notarize   — notarize for distribution"
+    echo "    ./build.sh release    — notarize + publish to GitHub"
     exit 0
 fi
 
 # =============================================================================
-# Step 3 (prod): Create DMG
+# Step 3: Create DMG
 # =============================================================================
 echo ""
 echo "Creating DMG..."
 
 DMG_DIR="$BUILD_DIR/dmg_staging"
-VERSION=$(defaults read "$CONTENTS/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "0.1.0")
 DMG_NAME="Snipshot-${VERSION}.dmg"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 
@@ -190,7 +186,7 @@ rm -rf "$DMG_DIR"
 echo "  Created: $DMG_PATH"
 
 # =============================================================================
-# Step 4 (prod): Notarize
+# Step 4: Notarize
 # =============================================================================
 echo ""
 echo "Submitting for notarization..."
@@ -209,23 +205,31 @@ xcrun notarytool submit "$DMG_PATH" \
     --wait
 
 # =============================================================================
-# Step 5 (prod): Staple
+# Step 5: Staple
 # =============================================================================
 echo ""
 echo "Stapling notarization ticket..."
 xcrun stapler staple "$DMG_PATH"
 
 echo ""
-echo "=== Prod build complete! ==="
+echo "=== Notarization complete! ==="
 echo ""
 echo "  DMG: $DMG_PATH"
 echo "  Signed by: $FULL_IDENTITY"
 echo "  Notarized & stapled: ✓"
-echo ""
-echo "  This DMG can be distributed to anyone."
 
 # =============================================================================
-# Step 6 (prod): Publish to GitHub Releases via release.sh
+# Notarize-only mode: done here
+# =============================================================================
+if [ "$BUILD_MODE" = "notarize" ]; then
+    echo ""
+    echo "  This DMG can be distributed to anyone."
+    echo "  To publish: ./build.sh release"
+    exit 0
+fi
+
+# =============================================================================
+# Step 6: Publish to GitHub Releases via release.sh
 # =============================================================================
 echo ""
 echo "Publishing to GitHub Releases..."
