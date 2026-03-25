@@ -6,6 +6,7 @@
 - **Sync Disk Loss**: If `/mnt/desktop/` becomes unresponsive, stop immediately and inform the user. Do NOT attempt workarounds.
 - **No Doc Versioning**: Always update docs in place. Never create `_v2`, `_v3` copies.
 - **Edit Files Directly**: Edit source files directly under `/mnt/desktop/Snipshot/` rather than copying to sandbox first.
+- **Bump Version Before Prod Build**: Every `./build.sh prod` MUST use a new version number. Before building, update `CFBundleShortVersionString` and `CFBundleVersion` in `Info.plist`, and `kSnipshotVersion` in `SettingsWindow.swift`. Never reuse a version that has already been published.
 
 ## 2. Project Structure
 
@@ -30,8 +31,8 @@
 - **Window Snapping**: Two-pass algorithm in `cacheWindowFrames`. Pass 1: collect layer-0 windows, clip to screen bounds. Pass 2: four-corner visibility check filters out occluded windows. `windowFrameAt` returns first Z-order match. Idle mode shows highlight + click-to-select.
 - **Multi-Monitor**: Overlay follows mouse between screens in idle mode (re-captures via `onScreenChange` callback to `AppDelegate`).
 - **Toolbar Positioning**: `panelYPosition()` tries below selection, then above, then inside (fullscreen fallback).
-- **TCC Permissions**: Self-signed cert "Snipshot Dev" keeps permissions stable across rebuilds.
-- **Build Modes**: `./build.sh` or `./build.sh dev` uses self-signed cert (fast, for development). `./build.sh prod` uses Developer ID Application cert with hardened runtime, creates DMG, submits for notarization, and staples the ticket. Prod notarization can take 5-15 min.
+- **TCC Permissions**: Both dev and prod builds use the same Developer ID Application certificate, so Screen Recording and Accessibility permissions persist across all builds.
+- **Build Modes**: `./build.sh` or `./build.sh dev` uses Developer ID Application cert (fast, no notarization). `./build.sh prod` uses the same cert with hardened runtime, creates DMG, submits for notarization, staples the ticket, and auto-publishes to GitHub Releases. Prod notarization can take 5-15 min.
 - **Auto-Update (Sparkle)**: Snipshot uses Sparkle 2 for automatic updates via GitHub Releases. The `SUFeedURL` in `Info.plist` points to `appcast.xml` in the `latest` GitHub Release. `build.sh` automatically downloads `Sparkle.framework`, links it, and signs its components inside-out.
 - **Publishing Flow**: To publish a new version: 1) Update version in `Info.plist` and `SettingsWindow.swift`. 2) Run `./build.sh prod`. The build script automatically calls `release.sh` after notarization, which signs the DMG with the Sparkle EdDSA private key, creates a GitHub Release using `gh` CLI, and updates `appcast.xml`. You can also run `./release.sh` separately if needed.
 
