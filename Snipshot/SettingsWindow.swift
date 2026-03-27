@@ -68,7 +68,7 @@ class SettingsWindow: NSWindow {
         currentConfig = HotkeyConfig(keyCode: savedKeyCode, modifiers: NSEvent.ModifierFlags(rawValue: savedModifiers))
 
         let width: CGFloat = 400
-        let height: CGFloat = 300
+        let height: CGFloat = 370
         let screenFrame = NSScreen.main?.frame ?? .zero
         let rect = NSRect(
             x: (screenFrame.width - width) / 2,
@@ -178,6 +178,24 @@ class SettingsWindow: NSWindow {
         launchDesc.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(launchDesc)
 
+        // Double-click to close pin toggle
+        let dblClickCheckbox = NSButton(checkboxWithTitle: "Double-click to close pinned image",
+                                         target: self, action: #selector(toggleDoubleClickClosePin(_:)))
+        // Default to ON if the key has never been set
+        let dblClickDefault = UserDefaults.standard.object(forKey: "doubleClickToClosePin") == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: "doubleClickToClosePin")
+        dblClickCheckbox.state = dblClickDefault ? .on : .off
+        dblClickCheckbox.controlSize = .regular
+        dblClickCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(dblClickCheckbox)
+
+        let dblClickDesc = NSTextField(labelWithString: "Double-click a pinned screenshot to dismiss it")
+        dblClickDesc.font = .systemFont(ofSize: 11, weight: .regular)
+        dblClickDesc.textColor = .secondaryLabelColor
+        dblClickDesc.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(dblClickDesc)
+
         // =====================================================================
         // Separator 2 (before debug)
         // =====================================================================
@@ -265,8 +283,15 @@ class SettingsWindow: NSWindow {
             launchDesc.topAnchor.constraint(equalTo: launchAtLoginCheckbox.bottomAnchor, constant: descGap),
             launchDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin + 18),
 
+            // Double-click to close pin checkbox
+            dblClickCheckbox.topAnchor.constraint(equalTo: launchDesc.bottomAnchor, constant: itemGap + 4),
+            dblClickCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            dblClickDesc.topAnchor.constraint(equalTo: dblClickCheckbox.bottomAnchor, constant: descGap),
+            dblClickDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin + 18),
+
             // Separator 2
-            separator2.topAnchor.constraint(equalTo: launchDesc.bottomAnchor, constant: sectionGap),
+            separator2.topAnchor.constraint(equalTo: dblClickDesc.bottomAnchor, constant: sectionGap),
             separator2.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
             separator2.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
 
@@ -330,8 +355,8 @@ class SettingsWindow: NSWindow {
     }
 
     private func adjustWindowHeight(expanded: Bool) {
-        let collapsedHeight: CGFloat = 330
-        let expandedHeight: CGFloat = 440
+        let collapsedHeight: CGFloat = 370
+        let expandedHeight: CGFloat = 480
         let targetHeight = expanded ? expandedHeight : collapsedHeight
 
         var frame = self.frame
@@ -377,6 +402,12 @@ class SettingsWindow: NSWindow {
             // Revert checkbox state on failure
             sender.state = enabled ? .off : .on
         }
+    }
+
+    @objc private func toggleDoubleClickClosePin(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        UserDefaults.standard.set(enabled, forKey: "doubleClickToClosePin")
+        logMessage("Double-click to close pin = \(enabled)")
     }
 
     @objc private func toggleAlwaysOnboarding(_ sender: NSButton) {

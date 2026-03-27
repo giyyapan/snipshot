@@ -2,14 +2,15 @@ import Cocoa
 
 class PinWindow: NSWindow {
 
-    private let pinnedImage: NSImage
-    private var currentScale: CGFloat = 1.0
-    private let baseSize: NSSize
+    let pinnedImage: NSImage
+    var currentScale: CGFloat = 1.0
+    let baseSize: NSSize
+
     private var imageView: NSImageView!
     private var pinView: PinContentView!
 
-    private let minScale: CGFloat = 0.1
-    private let maxScale: CGFloat = 5.0
+    let minScale: CGFloat = 0.1
+    let maxScale: CGFloat = 5.0
 
     init(image: NSImage, origin: NSPoint) {
         self.pinnedImage = image
@@ -72,18 +73,31 @@ class PinWindow: NSWindow {
     }
 
     // MARK: - Copy image
-    private func copyImageToClipboard() {
+    func copyImageToClipboard() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([pinnedImage])
         logMessage("Pin: Image copied to clipboard.")
-
-        // Visual feedback
         pinView?.showCopyFeedback()
     }
 
-    // MARK: - Zoom (shared logic for mouse wheel and trackpad pinch)
-    private func applyZoom(to targetScale: CGFloat) {
+    // MARK: - Scroll wheel → zoom
+    override func scrollWheel(with event: NSEvent) {
+        if event.hasPreciseScrollingDeltas { return }
+        let delta = event.scrollingDeltaY
+        guard abs(delta) > 0.1 else { return }
+        let zoomFactor: CGFloat = 1.0 + (delta * 0.03)
+        applyZoom(to: currentScale * zoomFactor)
+    }
+
+    // MARK: - Trackpad pinch → zoom
+    override func magnify(with event: NSEvent) {
+        let zoomFactor: CGFloat = 1.0 + event.magnification
+        applyZoom(to: currentScale * zoomFactor)
+    }
+
+    // MARK: - Zoom
+    func applyZoom(to targetScale: CGFloat) {
         let newScale = targetScale.clamped(to: minScale...maxScale)
         guard abs(newScale - currentScale) > 0.001 else { return }
 
@@ -110,22 +124,6 @@ class PinWindow: NSWindow {
         contentView?.frame = NSRect(origin: .zero, size: NSSize(width: newWidth, height: newHeight))
         imageView.frame = NSRect(origin: .zero, size: NSSize(width: newWidth, height: newHeight))
     }
-
-    // MARK: - Mouse scroll wheel → zoom
-    override func scrollWheel(with event: NSEvent) {
-        // Only handle discrete mouse wheel events; ignore trackpad scroll
-        guard !event.hasPreciseScrollingDeltas else { return }
-        let delta = event.scrollingDeltaY
-        guard abs(delta) > 0.1 else { return }
-        let zoomFactor: CGFloat = 1.0 + (delta * 0.03)
-        applyZoom(to: currentScale * zoomFactor)
-    }
-
-    // MARK: - Trackpad pinch → zoom
-    override func magnify(with event: NSEvent) {
-        let zoomFactor: CGFloat = 1.0 + event.magnification
-        applyZoom(to: currentScale * zoomFactor)
-    }
 }
 
 // MARK: - Clamped extension
@@ -139,7 +137,7 @@ extension Comparable {
 class PinContentView: NSView {
 
     let imageView: NSImageView
-    private weak var parentWindow: NSWindow?
+    private weak var parentWindow: PinWindow?
     private var dragOrigin: NSPoint?
     private var windowOriginAtDragStart: NSPoint?
     private var feedbackOverlay: NSView?
@@ -148,7 +146,7 @@ class PinContentView: NSView {
     private let normalBorderColor = NSColor.white.withAlphaComponent(0.3).cgColor
     private let selectedBorderColor = NSColor.systemBlue.withAlphaComponent(0.8).cgColor
 
-    init(frame: NSRect, image: NSImage, parentWindow: NSWindow) {
+    init(frame: NSRect, image: NSImage, parentWindow: PinWindow) {
         self.parentWindow = parentWindow
 
         imageView = NSImageView(frame: NSRect(origin: .zero, size: frame.size))
@@ -174,13 +172,18 @@ class PinContentView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    // KEY CHANGE: Accept the first mouse click without requiring the window to
+    // be focused first. This lets the user drag the pin window immediately.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
+    }
+
     // MARK: - Border state
     func updateBorder(isKey: Bool) {
         guard let layer = layer else { return }
         if isKey {
             layer.borderWidth = 2
             layer.borderColor = selectedBorderColor
-            // Add a subtle glow via shadow
             layer.shadowColor = NSColor.systemBlue.cgColor
             layer.shadowRadius = 6
             layer.shadowOpacity = 0.5
@@ -194,7 +197,6 @@ class PinContentView: NSView {
 
     // MARK: - Copy feedback animation
     func showCopyFeedback() {
-        // Brief white flash overlay
         let overlay = NSView(frame: bounds)
         overlay.wantsLayer = true
         overlay.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.3).cgColor
@@ -202,11 +204,9 @@ class PinContentView: NSView {
         addSubview(overlay)
         feedbackOverlay = overlay
 
-        // Also briefly flash the border green
         layer?.borderColor = NSColor.systemGreen.cgColor
         layer?.borderWidth = 3
 
-        // Fade out after a short delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self = self else { return }
             NSAnimationContext.runAnimationGroup({ context in
@@ -215,7 +215,6 @@ class PinContentView: NSView {
             }, completionHandler: { [weak self] in
                 overlay.removeFromSuperview()
                 self?.feedbackOverlay = nil
-                // Restore border to selected state
                 let isKey = self?.parentWindow?.isKeyWindow ?? false
                 self?.updateBorder(isKey: isKey)
             })
@@ -228,11 +227,21 @@ class PinContentView: NSView {
         return bounds.contains(local) ? self : nil
     }
 
-    // MARK: - Manual drag (works without prior focus)
+    // MARK: - Manual drag (works without prior focus thanks to acceptsFirstMouse)
     override func mouseDown(with event: NSEvent) {
-        // Make this window key immediately so ESC works
-        parentWindow?.makeKey()
-        // Record the mouse position in screen coordinates for drag
+        // Double-click to close pin (default: on; can be toggled in Settings)
+        if event.clickCount == 2 {
+            let key = "doubleClickToClosePin"
+            let enabled = UserDefaults.standard.object(forKey: key) == nil
+                ? true
+                : UserDefaults.standard.bool(forKey: key)
+            if enabled {
+                parentWindow?.close()
+                return
+            }
+        }
+
+        // Record drag start — do NOT makeKey here so drag works without focus
         dragOrigin = NSEvent.mouseLocation
         windowOriginAtDragStart = parentWindow?.frame.origin
     }
@@ -254,6 +263,14 @@ class PinContentView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        // If it was a click (not a drag), make key so ESC/Cmd+C and pinch zoom work
+        if let origin = dragOrigin {
+            let current = NSEvent.mouseLocation
+            let distance = hypot(current.x - origin.x, current.y - origin.y)
+            if distance < 3 {
+                parentWindow?.makeKey()
+            }
+        }
         dragOrigin = nil
         windowOriginAtDragStart = nil
     }
