@@ -172,6 +172,7 @@ extension OverlayView {
         guard let tool = annoState.currentTool else { return }
         guard let barFrame = bottomBarView?.frame else { return }
 
+        let showColors = (tool != .mosaic)
         let colors = AnnotationState.availableColors
         let colorSize: CGFloat = 18
         let colorSpacing: CGFloat = 3
@@ -183,13 +184,13 @@ extension OverlayView {
         let swAttrs: [NSAttributedString.Key: Any] = [.font: swFont]
         let swSize = (swText as NSString).size(withAttributes: swAttrs)
 
-        let colorsWidth = CGFloat(colors.count) * colorSize + CGFloat(colors.count - 1) * colorSpacing
+        let colorsWidth = showColors ? CGFloat(colors.count) * colorSize + CGFloat(colors.count - 1) * colorSpacing : 0
         let dividerW: CGFloat = 12
         let minusBtnW: CGFloat = 18
         let plusBtnW: CGFloat = 18
         let widthLabelW = swSize.width + 8
         let widthSectionW = minusBtnW + 4 + widthLabelW + 4 + plusBtnW
-        let totalWidth = padding + colorsWidth + dividerW + widthSectionW + padding
+        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + padding
         let h: CGFloat = 28
 
         let gap: CGFloat = 4
@@ -200,23 +201,25 @@ extension OverlayView {
 
         var bx = padding
 
-        // Color dots
-        let cy = (h - colorSize) / 2
-        for color in colors {
-            let dot = ColorDot(frame: NSRect(x: bx, y: cy, width: colorSize, height: colorSize), color: color)
-            dot.isSelected = annoState.currentColor.isEqual(to: color)
-            dot.onPress = { [weak self] in self?.selectColor(color) }
-            panel.addSubview(dot)
-            colorDots[color] = dot
-            bx += colorSize + colorSpacing
-        }
+        // Color dots (hidden for mosaic)
+        if showColors {
+            let cy = (h - colorSize) / 2
+            for color in colors {
+                let dot = ColorDot(frame: NSRect(x: bx, y: cy, width: colorSize, height: colorSize), color: color)
+                dot.isSelected = annoState.currentColor.isEqual(to: color)
+                dot.onPress = { [weak self] in self?.selectColor(color) }
+                panel.addSubview(dot)
+                colorDots[color] = dot
+                bx += colorSize + colorSpacing
+            }
 
-        // Divider
-        bx += (dividerW - colorSpacing) / 2
-        let divider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
-        divider.wantsLayer = true; divider.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
-        panel.addSubview(divider)
-        bx += (dividerW - colorSpacing) / 2
+            // Divider
+            bx += (dividerW - colorSpacing) / 2
+            let divider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
+            divider.wantsLayer = true; divider.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+            panel.addSubview(divider)
+            bx += (dividerW - colorSpacing) / 2
+        }
 
         // Minus button
         let btnH: CGFloat = 20

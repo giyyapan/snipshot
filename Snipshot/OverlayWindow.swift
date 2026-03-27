@@ -281,20 +281,23 @@ class OverlayView: NSView {
     func cropImage() -> NSImage? {
         guard hasSelection else { return nil }
 
-        let viewHeight = bounds.height
-        let scale = screenshot.representations.first.map {
-            CGFloat($0.pixelsWide) / screenshot.size.width
-        } ?? 2.0
+        guard let cgImage = screenshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
 
-        let imageRect = NSRect(
-            x: selectionRect.origin.x * scale,
-            y: (viewHeight - selectionRect.origin.y - selectionRect.height) * scale,
-            width: selectionRect.width * scale,
-            height: selectionRect.height * scale
+        // Use actual CGImage pixel dimensions for scale, not NSBitmapImageRep.pixelsWide
+        // which can differ from cgImage dimensions on non-standard DPI configurations (e.g. 4K at 1x)
+        let viewWidth = bounds.width
+        let viewHeight = bounds.height
+        let scaleX = CGFloat(cgImage.width) / viewWidth
+        let scaleY = CGFloat(cgImage.height) / viewHeight
+
+        let imageRect = CGRect(
+            x: selectionRect.origin.x * scaleX,
+            y: (viewHeight - selectionRect.origin.y - selectionRect.height) * scaleY,
+            width: selectionRect.width * scaleX,
+            height: selectionRect.height * scaleY
         )
 
-        guard let cgImage = screenshot.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let croppedCG = cgImage.cropping(to: imageRect) else { return nil }
+        guard let croppedCG = cgImage.cropping(to: imageRect) else { return nil }
 
         let baseImage = NSImage(cgImage: croppedCG, size: NSSize(width: selectionRect.width, height: selectionRect.height))
 

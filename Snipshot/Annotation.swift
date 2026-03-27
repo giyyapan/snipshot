@@ -242,7 +242,7 @@ class AnnotationState {
         .rectangle: 2,
         .text: 4,
         .marker: 8,
-        .mosaic: 10
+        .mosaic: 20
     ] {
         didSet {
             var dict: [String: Double] = [:]
@@ -468,21 +468,20 @@ class AnnotationRenderer {
 
         guard screenRect.width > 1 && screenRect.height > 1 else { return }
 
-        let scale = screenshot.representations.first.map {
-            CGFloat($0.pixelsWide) / screenshot.size.width
-        } ?? 2.0
+        guard let cgImage = screenshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
 
-        let screenHeight = NSScreen.screens.first?.frame.height ?? 1080
+        // Use actual CGImage pixel dimensions for scale, not NSBitmapImageRep.pixelsWide
+        let scaleX = CGFloat(cgImage.width) / screenshot.size.width
+        let scaleY = CGFloat(cgImage.height) / screenshot.size.height
 
-        let imgRect = NSRect(
-            x: screenRect.origin.x * scale,
-            y: (screenHeight - screenRect.origin.y - screenRect.height) * scale,
-            width: screenRect.width * scale,
-            height: screenRect.height * scale
+        let imgRect = CGRect(
+            x: screenRect.origin.x * scaleX,
+            y: (screenshot.size.height - screenRect.origin.y - screenRect.height) * scaleY,
+            width: screenRect.width * scaleX,
+            height: screenRect.height * scaleY
         )
 
-        guard let cgImage = screenshot.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let regionCG = cgImage.cropping(to: imgRect) else { return }
+        guard let regionCG = cgImage.cropping(to: imgRect) else { return }
 
         let blockSize = max(Int(element.strokeWidth), 5)
         let regionImage = NSImage(cgImage: regionCG, size: NSSize(width: screenRect.width, height: screenRect.height))
