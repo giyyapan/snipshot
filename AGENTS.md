@@ -16,6 +16,9 @@
 | `Snipshot/OverlayPanels.swift` | Panel management: info panel, bottom toolbar, secondary annotation panel |
 | `Snipshot/UIComponents.swift` | Reusable UI: `HoverIconButton`, `SmallButton`, `ColorDot` |
 | `Snipshot/OCRMode.swift` | OCR (Live Text) mode using VisionKit |
+| `Snipshot/PluginManager.swift` | Plugin system: manifest parsing, config loading, plugin discovery from `~/Library/Application Support/Snipshot/Plugins/` |
+| `Snipshot/PluginMode.swift` | Plugin interaction: input UI, script execution (Process), environment variable passing |
+| `Snipshot/PluginResultWindow.swift` | Floating result window (NSPanel) for displaying plugin output |
 | `Snipshot/AppDelegate.swift` | App lifecycle, hotkeys (`CGEvent.tapCreate`), screen capture (`CGWindowListCreateImage`), pin windows |
 | `build.sh` | Build script: `./build.sh` (build), `./build.sh notarize` (+ DMG + notarize), `./build.sh release` (+ publish) |
 | `setup_signing.sh` | Create Developer ID Application certificate via App Store Connect API |

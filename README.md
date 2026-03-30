@@ -9,10 +9,9 @@ A lightweight macOS screenshot tool with window snapping, annotation, OCR, and p
 
 ## Quick Start
 
-```bash
-# First time only: create a self-signed certificate for stable TCC permissions
-bash setup_cert.sh
+For first-time setup (certificate import, signing configuration), see **[docs/developer_setup.md](docs/developer_setup.md)**.
 
+```bash
 # Build and run
 bash build.sh
 open build/Snipshot.app
@@ -46,8 +45,12 @@ Snipshot/
 │   ├── UIComponents.swift     # Reusable UI components
 │   ├── OCRMode.swift          # Live Text / OCR
 │   ├── PinWindow.swift        # Pin-to-desktop windows
+│   ├── PluginManager.swift    # Plugin loading and configuration
+│   ├── PluginMode.swift       # Plugin input UI and script execution
+│   ├── PluginResultWindow.swift # Plugin result display window
 │   └── main.swift             # Entry point
 ├── docs/              # Design docs and research
+├── keys/              # Signing credentials (gitignored)
 ├── build.sh           # Build script (swiftc + codesign)
 ├── release.sh         # Publish script (Sparkle + GitHub Releases)
 ├── setup_cert.sh      # Self-signed certificate setup
@@ -64,7 +67,7 @@ bash build.sh
 pkill -f Snipshot; sleep 1; open build/Snipshot.app
 ```
 
-The self-signed certificate ("Snipshot Dev") keeps Screen Recording and Accessibility permissions stable across rebuilds. If permissions break, re-run `setup_cert.sh` and re-grant in System Settings > Privacy & Security.
+The Developer ID Application certificate keeps Screen Recording and Accessibility permissions stable across rebuilds. See [docs/developer_setup.md](docs/developer_setup.md) for certificate setup instructions.
 
 ## Publishing Updates
 
