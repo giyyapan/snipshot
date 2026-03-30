@@ -67,9 +67,18 @@ class PinWindow: NSWindow {
             close()
         } else if event.keyCode == 8 && flags.contains(.command) { // Cmd+C - copy image
             copyImageToClipboard()
+        } else if event.keyCode == 33 { // [ — decrease opacity
+            adjustOpacity(by: -0.1)
+        } else if event.keyCode == 30 { // ] — increase opacity
+            adjustOpacity(by: 0.1)
         } else {
             super.keyDown(with: event)
         }
+    }
+
+    private func adjustOpacity(by delta: CGFloat) {
+        let newOpacity = (alphaValue + delta).clamped(to: 0.2...1.0)
+        alphaValue = newOpacity
     }
 
     // MARK: - Copy image
@@ -81,12 +90,27 @@ class PinWindow: NSWindow {
         pinView?.showCopyFeedback()
     }
 
-    // MARK: - Scroll wheel → zoom
+    // MARK: - Scroll wheel → zoom or opacity
     override func scrollWheel(with event: NSEvent) {
-        if event.hasPreciseScrollingDeltas { return }
+        // When trackpadScrollAsZoom is enabled, treat precise (trackpad/Magic Mouse) scrolling as zoom too
+        let trackpadAsZoom = UserDefaults.standard.bool(forKey: "trackpadScrollAsZoom")
+        if event.hasPreciseScrollingDeltas && !trackpadAsZoom { return }
+
         let delta = event.scrollingDeltaY
-        guard abs(delta) > 0.1 else { return }
-        let zoomFactor: CGFloat = 1.0 + (delta * 0.03)
+        // For precise deltas, use a smaller factor since they produce larger values
+        let isPrecise = event.hasPreciseScrollingDeltas
+        guard abs(delta) > (isPrecise ? 0.5 : 0.1) else { return }
+
+        // Cmd+Scroll: adjust opacity
+        if event.modifierFlags.contains(.command) {
+            let opacityDelta: CGFloat = delta > 0 ? 0.05 : -0.05
+            adjustOpacity(by: opacityDelta)
+            return
+        }
+
+        let effectiveDelta = isPrecise ? -delta : delta
+        let factor: CGFloat = isPrecise ? 0.005 : 0.03
+        let zoomFactor: CGFloat = 1.0 + (effectiveDelta * factor)
         applyZoom(to: currentScale * zoomFactor)
     }
 

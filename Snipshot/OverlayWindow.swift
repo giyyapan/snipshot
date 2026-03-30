@@ -132,6 +132,9 @@ class OverlayView: NSView {
     var ocrPanelView: NSView?
     let imageAnalyzer = ImageAnalyzer()
 
+    // Translate state
+    var translateResultWindow: TranslateResultWindow?
+
     // Auto-copy: when enabled, selection completion auto-copies to clipboard
     var autoCopyEnabled: Bool = UserDefaults.standard.bool(forKey: "autoCopyAfterSelection")
     private var hasAutoCopied: Bool = false
@@ -402,11 +405,18 @@ class OverlayView: NSView {
             return
         }
         guard let image = cropImage() else { return }
-        let rect = selectionRect
+        // Convert view-local selectionRect to screen coordinates for pin positioning
+        let windowOrigin = window?.frame.origin ?? .zero
+        let screenRect = NSRect(
+            x: selectionRect.origin.x + windowOrigin.x,
+            y: selectionRect.origin.y + windowOrigin.y,
+            width: selectionRect.width,
+            height: selectionRect.height
+        )
         switch type {
-        case .copy:  onAction(.copy(image, rect))
-        case .save:  onAction(.save(image, rect))
-        case .pin:   onAction(.pin(image, rect))
+        case .copy:  onAction(.copy(image, screenRect))
+        case .save:  onAction(.save(image, screenRect))
+        case .pin:   onAction(.pin(image, screenRect))
         case .cancel: break
         }
     }
@@ -712,6 +722,65 @@ class OverlayView: NSView {
         (colorText as NSString).draw(at: textOrigin, withAttributes: textAttrs)
     }
 
+    /// Draw post-selection help tips in the bottom-left corner.
+    private func drawPostSelectionTips() {
+        let tips: [(String, String)] = [
+            ("Click", "Select annotation"),
+            ("Backspace", "Delete selected"),
+            ("F3", "Pin to screen"),
+            ("Pinned", "Drag to move"),
+            ("", "Scroll to resize"),
+            ("", "\u{2318}+Scroll for opacity"),
+            ("", "[ ] to adjust opacity"),
+        ]
+
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        let descFont = NSFont.systemFont(ofSize: 12, weight: .regular)
+        let keyAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let descAttrs: [NSAttributedString.Key: Any] = [.font: descFont, .foregroundColor: NSColor(white: 0.75, alpha: 1.0)]
+
+        let padding: CGFloat = 10
+        let lineSpacing: CGFloat = 4
+        let keyDescGap: CGFloat = 8
+
+        var maxKeyWidth: CGFloat = 0
+        var maxDescWidth: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        for (key, desc) in tips {
+            let ks = key.isEmpty ? CGSize.zero : (key as NSString).size(withAttributes: keyAttrs)
+            let ds = (desc as NSString).size(withAttributes: descAttrs)
+            maxKeyWidth = max(maxKeyWidth, ks.width)
+            maxDescWidth = max(maxDescWidth, ds.width)
+            lineHeight = max(lineHeight, max(ks.height, ds.height))
+        }
+
+        let boxWidth = padding + maxKeyWidth + keyDescGap + maxDescWidth + padding
+        let boxHeight = padding + CGFloat(tips.count) * lineHeight + CGFloat(tips.count - 1) * lineSpacing + padding
+
+        let margin: CGFloat = 12
+        let boxOrigin = NSPoint(x: bounds.minX + margin, y: bounds.minY + margin)
+        let boxRect = NSRect(x: boxOrigin.x, y: boxOrigin.y, width: boxWidth, height: boxHeight)
+
+        // Hide if mouse is near
+        if let mousePos = currentMousePosition {
+            let expandedRect = boxRect.insetBy(dx: -30, dy: -30)
+            if expandedRect.contains(mousePos) { return }
+        }
+
+        NSColor.black.withAlphaComponent(0.7).setFill()
+        NSBezierPath(roundedRect: boxRect, xRadius: 6, yRadius: 6).fill()
+
+        var y = boxOrigin.y + boxHeight - padding - lineHeight
+        for (key, desc) in tips {
+            if !key.isEmpty {
+                (key as NSString).draw(at: NSPoint(x: boxOrigin.x + padding, y: y), withAttributes: keyAttrs)
+            }
+            let descX = key.isEmpty ? boxOrigin.x + padding : boxOrigin.x + padding + maxKeyWidth + keyDescGap
+            (desc as NSString).draw(at: NSPoint(x: descX, y: y), withAttributes: descAttrs)
+            y -= lineHeight + lineSpacing
+        }
+    }
+
     /// Draw the keyboard shortcuts tips box in the bottom-left corner.
     /// Hidden when mouse is near it or when selection exists.
     private func drawTipsBox(mousePos: NSPoint) {
@@ -721,8 +790,8 @@ class OverlayView: NSView {
             ("C", "Copy color value"),
         ]
 
-        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
-        let descFont = NSFont.systemFont(ofSize: 11, weight: .regular)
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        let descFont = NSFont.systemFont(ofSize: 12, weight: .regular)
         let keyAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
         let descAttrs: [NSAttributedString.Key: Any] = [.font: descFont, .foregroundColor: NSColor(white: 0.75, alpha: 1.0)]
 
@@ -832,6 +901,11 @@ class OverlayView: NSView {
             }
 
             if case .drawing = mode { drawDimensionLabel(for: selectionRect) }
+
+            // Show help tips in selected/annotating modes
+            if mode == .selected || mode == .annotating {
+                drawPostSelectionTips()
+            }
         }
 
         if case .idle = mode, let mousePos = currentMousePosition {
@@ -932,6 +1006,14 @@ class OverlayView: NSView {
             }
 
             if let element = hitTestAnnotation(at: point) {
+                // Double-click on text element: re-enter editing mode
+                if event.clickCount == 2 && element.tool == .text {
+                    annoState.selectedElementId = element.id
+                    mode = .editingText
+                    showTextEditor(for: element)
+                    needsDisplay = true
+                    return
+                }
                 annoState.selectedElementId = element.id
                 switchToElementTool(element)
                 annoDragStart = localPt
@@ -987,6 +1069,14 @@ class OverlayView: NSView {
 
         case .selected:
             if let element = hitTestAnnotation(at: point) {
+                // Double-click on text element: re-enter editing mode
+                if event.clickCount == 2 && element.tool == .text {
+                    annoState.selectedElementId = element.id
+                    mode = .editingText
+                    showTextEditor(for: element)
+                    needsDisplay = true
+                    return
+                }
                 annoState.selectedElementId = element.id
                 switchToElementTool(element)
                 let localPt = screenToLocal(point)
@@ -1235,6 +1325,13 @@ class OverlayView: NSView {
                 return
             }
             if event.keyCode == 36 {
+                if flags.contains(.shift) {
+                    // Shift+Enter: insert newline into text field
+                    if let tf = textField, let editor = tf.currentEditor() {
+                        editor.insertNewline(nil)
+                    }
+                    return
+                }
                 commitTextEditing()
                 mode = .annotating; needsDisplay = true
                 return
@@ -1305,6 +1402,7 @@ class OverlayView: NSView {
             case "c": selectTool(.marker)
             case "m": selectTool(.mosaic)
             case "o": enterOCRMode()
+            case "y": enterTranslateMode()
             default:
                 if mode == .selected {
                     let nudge: CGFloat = 1
