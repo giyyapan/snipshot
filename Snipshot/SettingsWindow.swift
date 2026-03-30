@@ -42,22 +42,38 @@ struct HotkeyConfig: Equatable {
     }
 }
 
-// MARK: - Settings Window
+// MARK: - Settings Window (Tabbed)
 
 class SettingsWindow: NSWindow {
+    private var tabView: NSTabView!
     private var hotkeyField: HotkeyRecorderField!
     private var currentConfig: HotkeyConfig
     var onHotkeyChanged: ((HotkeyConfig) -> Void)?
     var onShowOnboarding: (() -> Void)?
 
-    // Debug section views (for collapse/expand)
+    // Debug section views (for collapse/expand) — in General tab
     private var debugDisclosureButton: NSButton!
     private var debugContentViews: [NSView] = []
-    private var debugContentConstraints: [NSLayoutConstraint] = []
     private var debugIsExpanded = false
 
-    // Dynamic height constraints
-    private var windowHeightConstraint: NSLayoutConstraint?
+    // AI section fields
+    private var aiStatusLabel: NSTextField!
+    private var aiApiKeyField: NSSecureTextField!
+    private var aiEndpointField: NSTextField!
+    private var aiModelField: NSTextField!
+    private var aiTestButton: NSButton!
+    private var aiTestStatusLabel: NSTextField!
+
+    // Translation section
+    private var translateLanguagePopup: NSPopUpButton!
+
+    // Translation prompt (always visible)
+    private var translatePromptView: NSScrollView!
+    private var translatePromptTextView: NSTextView!
+
+    // OCR Refine prompt
+    private var ocrRefinePromptView: NSScrollView!
+    private var ocrRefinePromptTextView: NSTextView!
 
     init() {
         // Load saved hotkey or use default
@@ -67,8 +83,11 @@ class SettingsWindow: NSWindow {
             ?? HotkeyConfig.defaultCapture.modifiers.rawValue
         currentConfig = HotkeyConfig(keyCode: savedKeyCode, modifiers: NSEvent.ModifierFlags(rawValue: savedModifiers))
 
-        let width: CGFloat = 400
-        let height: CGFloat = 370
+        // Migrate old keys
+        AISettings.migrateIfNeeded()
+
+        let width: CGFloat = 480
+        let height: CGFloat = 420
         let screenFrame = NSScreen.main?.frame ?? .zero
         let rect = NSRect(
             x: (screenFrame.width - width) / 2,
@@ -93,29 +112,53 @@ class SettingsWindow: NSWindow {
         guard let contentView = self.contentView else { return }
         contentView.wantsLayer = true
 
-        // =====================================================================
-        // Version label (bottom-right)
-        // =====================================================================
-        let versionLabel = NSTextField(labelWithString: "Snipshot v\(kSnipshotVersion)")
-        versionLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        versionLabel.textColor = .secondaryLabelColor
-        versionLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(versionLabel)
+        tabView = NSTabView()
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        tabView.tabViewType = .topTabsBezelBorder
+        contentView.addSubview(tabView)
 
-        let authorLabel = NSTextField(labelWithString: "by giyyapan")
-        authorLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        authorLabel.textColor = .tertiaryLabelColor
-        authorLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(authorLabel)
+        NSLayoutConstraint.activate([
+            tabView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            tabView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            tabView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            tabView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+        ])
 
-        // =====================================================================
-        // Section 1: Capture Hotkey
-        // =====================================================================
+        // Create tabs
+        let generalTab = NSTabViewItem(identifier: "general")
+        generalTab.label = "General"
+        generalTab.view = buildGeneralTab()
+
+        let aiTab = NSTabViewItem(identifier: "ai")
+        aiTab.label = "AI"
+        aiTab.view = buildAITab()
+
+        let aboutTab = NSTabViewItem(identifier: "about")
+        aboutTab.label = "About"
+        aboutTab.view = buildAboutTab()
+
+        tabView.addTabViewItem(generalTab)
+        tabView.addTabViewItem(aiTab)
+        tabView.addTabViewItem(aboutTab)
+    }
+
+    // MARK: - General Tab
+
+    private func buildGeneralTab() -> NSView {
+        let container = NSView()
+        container.autoresizingMask = [.width, .height]
+
+        let margin: CGFloat = 20
+        let sectionGap: CGFloat = 16
+        let itemGap: CGFloat = 8
+        let descGap: CGFloat = 2
+
+        // Capture Hotkey
         let hotkeyTitle = NSTextField(labelWithString: "Capture Hotkey")
         hotkeyTitle.font = .systemFont(ofSize: 13, weight: .semibold)
         hotkeyTitle.textColor = .labelColor
         hotkeyTitle.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(hotkeyTitle)
+        container.addSubview(hotkeyTitle)
 
         hotkeyField = HotkeyRecorderField(config: currentConfig)
         hotkeyField.translatesAutoresizingMaskIntoConstraints = false
@@ -125,212 +168,621 @@ class SettingsWindow: NSWindow {
             UserDefaults.standard.set(newConfig.modifiers.rawValue, forKey: "captureHotkeyModifiers")
             self?.onHotkeyChanged?(newConfig)
         }
-        contentView.addSubview(hotkeyField)
+        container.addSubview(hotkeyField)
 
         let resetButton = NSButton(title: "Reset to Default (F1)", target: self, action: #selector(resetHotkey))
         resetButton.bezelStyle = .rounded
         resetButton.controlSize = .regular
         resetButton.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(resetButton)
+        container.addSubview(resetButton)
 
-        // =====================================================================
         // Separator 1
-        // =====================================================================
         let separator1 = NSBox()
         separator1.boxType = .separator
         separator1.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(separator1)
+        container.addSubview(separator1)
 
-        // =====================================================================
-        // Section 2: General Settings
-        // =====================================================================
-        let generalTitle = NSTextField(labelWithString: "General")
-        generalTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        generalTitle.textColor = .labelColor
-        generalTitle.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(generalTitle)
-
-        // Auto-copy toggle
+        // Auto-copy
         let autoCopyCheckbox = NSButton(checkboxWithTitle: "Auto-copy after selection",
                                          target: self, action: #selector(toggleAutoCopy(_:)))
         autoCopyCheckbox.state = UserDefaults.standard.bool(forKey: "autoCopyAfterSelection") ? .on : .off
         autoCopyCheckbox.controlSize = .regular
         autoCopyCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(autoCopyCheckbox)
+        container.addSubview(autoCopyCheckbox)
 
         let autoCopyDesc = NSTextField(labelWithString: "Automatically copy selection to clipboard when area is selected")
         autoCopyDesc.font = .systemFont(ofSize: 11, weight: .regular)
         autoCopyDesc.textColor = .secondaryLabelColor
         autoCopyDesc.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(autoCopyDesc)
+        container.addSubview(autoCopyDesc)
 
-        // Launch at login toggle
+        // Launch at login
         let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login",
                                               target: self, action: #selector(toggleLaunchAtLogin(_:)))
         launchAtLoginCheckbox.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         launchAtLoginCheckbox.controlSize = .regular
         launchAtLoginCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(launchAtLoginCheckbox)
+        container.addSubview(launchAtLoginCheckbox)
 
         let launchDesc = NSTextField(labelWithString: "Start Snipshot automatically when you log in")
         launchDesc.font = .systemFont(ofSize: 11, weight: .regular)
         launchDesc.textColor = .secondaryLabelColor
         launchDesc.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(launchDesc)
+        container.addSubview(launchDesc)
 
-        // Double-click to close pin toggle
+        // Double-click to close pin
         let dblClickCheckbox = NSButton(checkboxWithTitle: "Double-click to close pinned image",
                                          target: self, action: #selector(toggleDoubleClickClosePin(_:)))
-        // Default to ON if the key has never been set
         let dblClickDefault = UserDefaults.standard.object(forKey: "doubleClickToClosePin") == nil
             ? true
             : UserDefaults.standard.bool(forKey: "doubleClickToClosePin")
         dblClickCheckbox.state = dblClickDefault ? .on : .off
         dblClickCheckbox.controlSize = .regular
         dblClickCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(dblClickCheckbox)
+        container.addSubview(dblClickCheckbox)
 
         let dblClickDesc = NSTextField(labelWithString: "Double-click a pinned screenshot to dismiss it")
         dblClickDesc.font = .systemFont(ofSize: 11, weight: .regular)
         dblClickDesc.textColor = .secondaryLabelColor
         dblClickDesc.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(dblClickDesc)
+        container.addSubview(dblClickDesc)
 
-        // =====================================================================
+        // Trackpad scroll as zoom
+        let trackpadScrollCheckbox = NSButton(checkboxWithTitle: "Trackpad: use two-finger scroll for zoom",
+                                               target: self, action: #selector(toggleTrackpadScrollZoom(_:)))
+        trackpadScrollCheckbox.state = UserDefaults.standard.bool(forKey: "trackpadScrollAsZoom") ? .on : .off
+        trackpadScrollCheckbox.controlSize = .regular
+        trackpadScrollCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(trackpadScrollCheckbox)
+
+        let trackpadScrollDesc = NSTextField(labelWithString: "Enable this for Magic Mouse or if pinch-to-zoom is unavailable")
+        trackpadScrollDesc.font = .systemFont(ofSize: 11, weight: .regular)
+        trackpadScrollDesc.textColor = .secondaryLabelColor
+        trackpadScrollDesc.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(trackpadScrollDesc)
+
         // Separator 2 (before debug)
-        // =====================================================================
         let separator2 = NSBox()
         separator2.boxType = .separator
         separator2.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(separator2)
+        container.addSubview(separator2)
 
-        // =====================================================================
-        // Section 3: Debug (collapsible, subtle entry)
-        // =====================================================================
-        // Use a small clickable text button as the disclosure trigger
+        // Debug section (collapsible)
         debugDisclosureButton = NSButton(title: "Debug ▶", target: self, action: #selector(toggleDebugSection))
         debugDisclosureButton.bezelStyle = .inline
         debugDisclosureButton.isBordered = false
         debugDisclosureButton.font = .systemFont(ofSize: 11, weight: .regular)
         debugDisclosureButton.contentTintColor = .tertiaryLabelColor
         debugDisclosureButton.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(debugDisclosureButton)
+        container.addSubview(debugDisclosureButton)
 
-        // Debug content views (initially hidden)
         let onboardingCheckbox = NSButton(checkboxWithTitle: "Always show onboarding on launch",
                                           target: self, action: #selector(toggleAlwaysOnboarding(_:)))
         onboardingCheckbox.state = UserDefaults.standard.bool(forKey: "debugAlwaysShowOnboarding") ? .on : .off
         onboardingCheckbox.controlSize = .regular
         onboardingCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(onboardingCheckbox)
+        container.addSubview(onboardingCheckbox)
 
         let showNowButton = NSButton(title: "Show Onboarding Now", target: self, action: #selector(showOnboardingNow))
         showNowButton.bezelStyle = .rounded
         showNowButton.controlSize = .regular
         showNowButton.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(showNowButton)
+        container.addSubview(showNowButton)
 
         let resetAllButton = NSButton(title: "Reset Everything & Quit", target: self, action: #selector(resetEverythingAndQuit))
         resetAllButton.bezelStyle = .rounded
         resetAllButton.controlSize = .regular
         resetAllButton.contentTintColor = .systemRed
         resetAllButton.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(resetAllButton)
+        container.addSubview(resetAllButton)
 
         debugContentViews = [onboardingCheckbox, showNowButton, resetAllButton]
 
-        // =====================================================================
-        // Layout
-        // =====================================================================
-        let margin: CGFloat = 24
-        let sectionGap: CGFloat = 16
-        let itemGap: CGFloat = 8
-        let descGap: CGFloat = 2
-
         NSLayoutConstraint.activate([
-            // Hotkey section
-            hotkeyTitle.topAnchor.constraint(equalTo: contentView.topAnchor, constant: margin),
-            hotkeyTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            // Hotkey
+            hotkeyTitle.topAnchor.constraint(equalTo: container.topAnchor, constant: margin),
+            hotkeyTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             hotkeyField.centerYAnchor.constraint(equalTo: hotkeyTitle.centerYAnchor),
             hotkeyField.leadingAnchor.constraint(equalTo: hotkeyTitle.trailingAnchor, constant: 16),
-            hotkeyField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
+            hotkeyField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
             hotkeyField.heightAnchor.constraint(equalToConstant: 28),
 
             resetButton.topAnchor.constraint(equalTo: hotkeyTitle.bottomAnchor, constant: sectionGap),
-            resetButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            resetButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             // Separator 1
             separator1.topAnchor.constraint(equalTo: resetButton.bottomAnchor, constant: sectionGap),
-            separator1.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
-            separator1.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
+            separator1.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            separator1.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
 
-            // General section title
-            generalTitle.topAnchor.constraint(equalTo: separator1.bottomAnchor, constant: sectionGap),
-            generalTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
-
-            // Auto-copy checkbox
-            autoCopyCheckbox.topAnchor.constraint(equalTo: generalTitle.bottomAnchor, constant: itemGap),
-            autoCopyCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            // Auto-copy
+            autoCopyCheckbox.topAnchor.constraint(equalTo: separator1.bottomAnchor, constant: sectionGap),
+            autoCopyCheckbox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             autoCopyDesc.topAnchor.constraint(equalTo: autoCopyCheckbox.bottomAnchor, constant: descGap),
-            autoCopyDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin + 18),
+            autoCopyDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 18),
 
-            // Launch at login checkbox
+            // Launch at login
             launchAtLoginCheckbox.topAnchor.constraint(equalTo: autoCopyDesc.bottomAnchor, constant: itemGap + 4),
-            launchAtLoginCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            launchAtLoginCheckbox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             launchDesc.topAnchor.constraint(equalTo: launchAtLoginCheckbox.bottomAnchor, constant: descGap),
-            launchDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin + 18),
+            launchDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 18),
 
-            // Double-click to close pin checkbox
+            // Double-click
             dblClickCheckbox.topAnchor.constraint(equalTo: launchDesc.bottomAnchor, constant: itemGap + 4),
-            dblClickCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            dblClickCheckbox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             dblClickDesc.topAnchor.constraint(equalTo: dblClickCheckbox.bottomAnchor, constant: descGap),
-            dblClickDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin + 18),
+            dblClickDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 18),
+
+            // Trackpad scroll as zoom
+            trackpadScrollCheckbox.topAnchor.constraint(equalTo: dblClickDesc.bottomAnchor, constant: itemGap + 4),
+            trackpadScrollCheckbox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            trackpadScrollDesc.topAnchor.constraint(equalTo: trackpadScrollCheckbox.bottomAnchor, constant: descGap),
+            trackpadScrollDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 18),
 
             // Separator 2
-            separator2.topAnchor.constraint(equalTo: dblClickDesc.bottomAnchor, constant: sectionGap),
-            separator2.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
-            separator2.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
+            separator2.topAnchor.constraint(equalTo: trackpadScrollDesc.bottomAnchor, constant: sectionGap),
+            separator2.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            separator2.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
 
-            // Debug disclosure button (subtle, small)
+            // Debug
             debugDisclosureButton.topAnchor.constraint(equalTo: separator2.bottomAnchor, constant: 10),
-            debugDisclosureButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            debugDisclosureButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
-            // Debug content (initially hidden via constraints)
             onboardingCheckbox.topAnchor.constraint(equalTo: debugDisclosureButton.bottomAnchor, constant: itemGap),
-            onboardingCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            onboardingCheckbox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             showNowButton.topAnchor.constraint(equalTo: onboardingCheckbox.bottomAnchor, constant: itemGap),
-            showNowButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            showNowButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             resetAllButton.topAnchor.constraint(equalTo: showNowButton.bottomAnchor, constant: itemGap),
-            resetAllButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
-
-            // Version + author labels
-            versionLabel.bottomAnchor.constraint(equalTo: authorLabel.topAnchor, constant: -2),
-            versionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
-
-            authorLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            authorLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
+            resetAllButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
         ])
 
-        // Start with debug section collapsed
+        // Start with debug collapsed
         setDebugExpanded(false, animate: false)
+
+        return container
     }
+
+    // MARK: - AI Tab
+
+    private func buildAITab() -> NSView {
+        // Outer scroll view that fills the tab area
+        let scrollView = NSScrollView()
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.autohidesScrollers = true
+
+        // Flipped container so Auto Layout anchors from top work correctly
+        let container = FlippedView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = container
+
+        // Pin container width to scroll view's clip view (no horizontal scroll)
+        let clipView = scrollView.contentView
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
+        ])
+
+        let margin: CGFloat = 20
+        let sectionGap: CGFloat = 16
+        let itemGap: CGFloat = 8
+        let fieldGap: CGFloat = 6
+        let configLabelWidth: CGFloat = 70
+
+        // AI Configuration section
+        let aiTitle = NSTextField(labelWithString: "AI Configuration")
+        aiTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        aiTitle.textColor = .labelColor
+        aiTitle.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiTitle)
+
+        let aiStatusText = AISettings.isConfigured ? "Configured" : "Not Configured"
+        let aiStatusColor: NSColor = AISettings.isConfigured ? .systemGreen : .systemOrange
+        aiStatusLabel = NSTextField(labelWithString: aiStatusText)
+        aiStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        aiStatusLabel.textColor = aiStatusColor
+        aiStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiStatusLabel)
+
+        let aiDesc = NSTextField(wrappingLabelWithString: "Powers all AI features (translation, etc). Get a free API key from Google AI Studio:")
+        aiDesc.font = .systemFont(ofSize: 11, weight: .regular)
+        aiDesc.textColor = .secondaryLabelColor
+        aiDesc.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiDesc)
+
+        let getKeyButton = NSButton(title: "Get Free API Key →", target: self, action: #selector(openGoogleAIStudio))
+        getKeyButton.bezelStyle = .inline
+        getKeyButton.isBordered = false
+        getKeyButton.font = .systemFont(ofSize: 11, weight: .medium)
+        getKeyButton.contentTintColor = .systemBlue
+        getKeyButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(getKeyButton)
+
+        // API Key
+        let apiKeyLabel = NSTextField(labelWithString: "API Key")
+        apiKeyLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        apiKeyLabel.textColor = .labelColor
+        apiKeyLabel.alignment = .right
+        apiKeyLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(apiKeyLabel)
+
+        aiApiKeyField = NSSecureTextField()
+        aiApiKeyField.placeholderString = "Paste your API key here"
+        aiApiKeyField.font = .systemFont(ofSize: 12)
+        aiApiKeyField.translatesAutoresizingMaskIntoConstraints = false
+        aiApiKeyField.stringValue = AISettings.apiKey
+        container.addSubview(aiApiKeyField)
+
+        // Endpoint
+        let endpointLabel = NSTextField(labelWithString: "Endpoint")
+        endpointLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        endpointLabel.textColor = .labelColor
+        endpointLabel.alignment = .right
+        endpointLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(endpointLabel)
+
+        aiEndpointField = NSTextField()
+        aiEndpointField.placeholderString = "OpenAI-compatible API endpoint"
+        aiEndpointField.font = .systemFont(ofSize: 11)
+        aiEndpointField.translatesAutoresizingMaskIntoConstraints = false
+        aiEndpointField.stringValue = AISettings.apiEndpoint
+        container.addSubview(aiEndpointField)
+
+        // Model
+        let modelLabel = NSTextField(labelWithString: "Model")
+        modelLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        modelLabel.textColor = .labelColor
+        modelLabel.alignment = .right
+        modelLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(modelLabel)
+
+        aiModelField = NSTextField()
+        aiModelField.placeholderString = "e.g. gemini-3-flash-preview"
+        aiModelField.font = .systemFont(ofSize: 12)
+        aiModelField.translatesAutoresizingMaskIntoConstraints = false
+        aiModelField.stringValue = AISettings.model
+        container.addSubview(aiModelField)
+
+        // Test button + status
+        aiTestButton = NSButton(title: "Test Connection", target: self, action: #selector(testAIConnection))
+        aiTestButton.bezelStyle = .rounded
+        aiTestButton.controlSize = .small
+        aiTestButton.font = .systemFont(ofSize: 11)
+        aiTestButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiTestButton)
+
+        aiTestStatusLabel = NSTextField(labelWithString: "")
+        aiTestStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        aiTestStatusLabel.textColor = .secondaryLabelColor
+        aiTestStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        aiTestStatusLabel.lineBreakMode = .byTruncatingTail
+        container.addSubview(aiTestStatusLabel)
+
+        // Register for text field editing notifications (auto-save)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
+                                               name: NSControl.textDidEndEditingNotification, object: aiApiKeyField)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
+                                               name: NSControl.textDidEndEditingNotification, object: aiEndpointField)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
+                                               name: NSControl.textDidEndEditingNotification, object: aiModelField)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: aiApiKeyField)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: aiEndpointField)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: aiModelField)
+
+        // Separator
+        let separator1 = NSBox()
+        separator1.boxType = .separator
+        separator1.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(separator1)
+
+        // Translation section
+        let translateTitle = NSTextField(labelWithString: "Translation")
+        translateTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        translateTitle.textColor = .labelColor
+        translateTitle.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(translateTitle)
+
+        let langLabel = NSTextField(labelWithString: "Target Language")
+        langLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        langLabel.textColor = .labelColor
+        langLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(langLabel)
+
+        translateLanguagePopup = NSPopUpButton()
+        translateLanguagePopup.font = .systemFont(ofSize: 12)
+        translateLanguagePopup.translatesAutoresizingMaskIntoConstraints = false
+        translateLanguagePopup.target = self
+        translateLanguagePopup.action = #selector(translateLanguageChanged)
+        rebuildSettingsLanguageMenu()
+        container.addSubview(translateLanguagePopup)
+
+        // Translation prompt (always visible, no fold)
+        let promptLabel = NSTextField(labelWithString: "Prompt")
+        promptLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        promptLabel.textColor = .labelColor
+        promptLabel.alignment = .right
+        promptLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(promptLabel)
+
+        translatePromptView = NSScrollView()
+        translatePromptView.hasVerticalScroller = true
+        translatePromptView.borderType = .bezelBorder
+        translatePromptView.translatesAutoresizingMaskIntoConstraints = false
+
+        translatePromptTextView = NSTextView()
+        translatePromptTextView.font = .systemFont(ofSize: 11)
+        translatePromptTextView.isRichText = false
+        translatePromptTextView.isAutomaticQuoteSubstitutionEnabled = false
+        translatePromptTextView.isAutomaticDashSubstitutionEnabled = false
+        translatePromptTextView.textContainerInset = NSSize(width: 4, height: 4)
+        let savedPrompt = UserDefaults.standard.string(forKey: TranslateSettings.systemPromptKey)
+            ?? TranslateSettings.defaultSystemPrompt
+        translatePromptTextView.string = savedPrompt
+        translatePromptTextView.delegate = self
+        translatePromptView.documentView = translatePromptTextView
+        container.addSubview(translatePromptView)
+
+        let resetTranslatePromptButton = NSButton(title: "Reset", target: self, action: #selector(resetTranslatePrompt))
+        resetTranslatePromptButton.bezelStyle = .rounded
+        resetTranslatePromptButton.controlSize = .small
+        resetTranslatePromptButton.font = .systemFont(ofSize: 11)
+        resetTranslatePromptButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(resetTranslatePromptButton)
+
+        // Separator 2
+        let separator2 = NSBox()
+        separator2.boxType = .separator
+        separator2.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(separator2)
+
+        // OCR Refine section
+        let ocrTitle = NSTextField(labelWithString: "OCR Refine")
+        ocrTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        ocrTitle.textColor = .labelColor
+        ocrTitle.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(ocrTitle)
+
+        let ocrPromptLabel = NSTextField(labelWithString: "Prompt")
+        ocrPromptLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        ocrPromptLabel.textColor = .labelColor
+        ocrPromptLabel.alignment = .right
+        ocrPromptLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(ocrPromptLabel)
+
+        ocrRefinePromptView = NSScrollView()
+        ocrRefinePromptView.hasVerticalScroller = true
+        ocrRefinePromptView.borderType = .bezelBorder
+        ocrRefinePromptView.translatesAutoresizingMaskIntoConstraints = false
+
+        ocrRefinePromptTextView = NSTextView()
+        ocrRefinePromptTextView.font = .systemFont(ofSize: 11)
+        ocrRefinePromptTextView.isRichText = false
+        ocrRefinePromptTextView.isAutomaticQuoteSubstitutionEnabled = false
+        ocrRefinePromptTextView.isAutomaticDashSubstitutionEnabled = false
+        ocrRefinePromptTextView.textContainerInset = NSSize(width: 4, height: 4)
+        let savedOCRPrompt = UserDefaults.standard.string(forKey: OCRRefineSettings.systemPromptKey)
+            ?? OCRRefineSettings.defaultSystemPrompt
+        ocrRefinePromptTextView.string = savedOCRPrompt
+        ocrRefinePromptTextView.delegate = self
+        ocrRefinePromptView.documentView = ocrRefinePromptTextView
+        container.addSubview(ocrRefinePromptView)
+
+        let resetOCRPromptButton = NSButton(title: "Reset", target: self, action: #selector(resetOCRRefinePrompt))
+        resetOCRPromptButton.bezelStyle = .rounded
+        resetOCRPromptButton.controlSize = .small
+        resetOCRPromptButton.font = .systemFont(ofSize: 11)
+        resetOCRPromptButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(resetOCRPromptButton)
+
+        NSLayoutConstraint.activate([
+            // AI Configuration
+            aiTitle.topAnchor.constraint(equalTo: container.topAnchor, constant: margin),
+            aiTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            aiStatusLabel.centerYAnchor.constraint(equalTo: aiTitle.centerYAnchor),
+            aiStatusLabel.leadingAnchor.constraint(equalTo: aiTitle.trailingAnchor, constant: 10),
+
+            aiDesc.topAnchor.constraint(equalTo: aiTitle.bottomAnchor, constant: 4),
+            aiDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            aiDesc.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            getKeyButton.topAnchor.constraint(equalTo: aiDesc.bottomAnchor, constant: 2),
+            getKeyButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            // API Key row
+            apiKeyLabel.topAnchor.constraint(equalTo: getKeyButton.bottomAnchor, constant: itemGap),
+            apiKeyLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            apiKeyLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            aiApiKeyField.centerYAnchor.constraint(equalTo: apiKeyLabel.centerYAnchor),
+            aiApiKeyField.leadingAnchor.constraint(equalTo: apiKeyLabel.trailingAnchor, constant: 8),
+            aiApiKeyField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            aiApiKeyField.heightAnchor.constraint(equalToConstant: 24),
+
+            // Endpoint row
+            endpointLabel.topAnchor.constraint(equalTo: apiKeyLabel.bottomAnchor, constant: fieldGap + 4),
+            endpointLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            endpointLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            aiEndpointField.centerYAnchor.constraint(equalTo: endpointLabel.centerYAnchor),
+            aiEndpointField.leadingAnchor.constraint(equalTo: endpointLabel.trailingAnchor, constant: 8),
+            aiEndpointField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            aiEndpointField.heightAnchor.constraint(equalToConstant: 24),
+
+            // Model row
+            modelLabel.topAnchor.constraint(equalTo: endpointLabel.bottomAnchor, constant: fieldGap + 4),
+            modelLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            modelLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            aiModelField.centerYAnchor.constraint(equalTo: modelLabel.centerYAnchor),
+            aiModelField.leadingAnchor.constraint(equalTo: modelLabel.trailingAnchor, constant: 8),
+            aiModelField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            aiModelField.heightAnchor.constraint(equalToConstant: 24),
+
+            // Test button + status
+            aiTestButton.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: itemGap + 2),
+            aiTestButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            aiTestStatusLabel.centerYAnchor.constraint(equalTo: aiTestButton.centerYAnchor),
+            aiTestStatusLabel.leadingAnchor.constraint(equalTo: aiTestButton.trailingAnchor, constant: 8),
+            aiTestStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -margin),
+
+            // Separator
+            separator1.topAnchor.constraint(equalTo: aiTestButton.bottomAnchor, constant: sectionGap),
+            separator1.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            separator1.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            // Translation section
+            translateTitle.topAnchor.constraint(equalTo: separator1.bottomAnchor, constant: sectionGap),
+            translateTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            langLabel.topAnchor.constraint(equalTo: translateTitle.bottomAnchor, constant: itemGap),
+            langLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            translateLanguagePopup.centerYAnchor.constraint(equalTo: langLabel.centerYAnchor),
+            translateLanguagePopup.leadingAnchor.constraint(equalTo: langLabel.trailingAnchor, constant: 8),
+            translateLanguagePopup.widthAnchor.constraint(equalToConstant: 180),
+
+            // Prompt row (always visible)
+            promptLabel.topAnchor.constraint(equalTo: langLabel.bottomAnchor, constant: itemGap),
+            promptLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            promptLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            translatePromptView.topAnchor.constraint(equalTo: promptLabel.topAnchor),
+            translatePromptView.leadingAnchor.constraint(equalTo: promptLabel.trailingAnchor, constant: 8),
+            translatePromptView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            translatePromptView.heightAnchor.constraint(equalToConstant: 80),
+
+            resetTranslatePromptButton.topAnchor.constraint(equalTo: translatePromptView.bottomAnchor, constant: fieldGap),
+            resetTranslatePromptButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            // Separator 2
+            separator2.topAnchor.constraint(equalTo: resetTranslatePromptButton.bottomAnchor, constant: sectionGap),
+            separator2.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            separator2.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            // OCR Refine section
+            ocrTitle.topAnchor.constraint(equalTo: separator2.bottomAnchor, constant: sectionGap),
+            ocrTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            ocrPromptLabel.topAnchor.constraint(equalTo: ocrTitle.bottomAnchor, constant: itemGap),
+            ocrPromptLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            ocrPromptLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            ocrRefinePromptView.topAnchor.constraint(equalTo: ocrPromptLabel.topAnchor),
+            ocrRefinePromptView.leadingAnchor.constraint(equalTo: ocrPromptLabel.trailingAnchor, constant: 8),
+            ocrRefinePromptView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            ocrRefinePromptView.heightAnchor.constraint(equalToConstant: 80),
+
+            resetOCRPromptButton.topAnchor.constraint(equalTo: ocrRefinePromptView.bottomAnchor, constant: fieldGap),
+            resetOCRPromptButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+        ])
+
+        // Bottom anchor to size the container to fit its content
+        NSLayoutConstraint.activate([
+            resetOCRPromptButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -margin)
+        ])
+
+        return scrollView
+    }
+
+    // MARK: - About Tab
+
+    private func buildAboutTab() -> NSView {
+        let container = NSView()
+        container.autoresizingMask = [.width, .height]
+
+        let margin: CGFloat = 20
+
+        // App icon (use system symbol as placeholder)
+        let iconView = NSImageView()
+        iconView.image = NSApp.applicationIconImage
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(iconView)
+
+        let nameLabel = NSTextField(labelWithString: "Snipshot")
+        nameLabel.font = .systemFont(ofSize: 20, weight: .bold)
+        nameLabel.textColor = .labelColor
+        nameLabel.alignment = .center
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(nameLabel)
+
+        let versionLabel = NSTextField(labelWithString: "Version \(kSnipshotVersion)")
+        versionLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        versionLabel.textColor = .secondaryLabelColor
+        versionLabel.alignment = .center
+        versionLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(versionLabel)
+
+        let descLabel = NSTextField(wrappingLabelWithString: "A lightweight macOS screenshot tool with annotation, OCR, translation, and pin-to-desktop.")
+        descLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        descLabel.textColor = .secondaryLabelColor
+        descLabel.alignment = .center
+        descLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(descLabel)
+
+        let authorLabel = NSTextField(labelWithString: "by giyyapan")
+        authorLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        authorLabel.textColor = .tertiaryLabelColor
+        authorLabel.alignment = .center
+        authorLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(authorLabel)
+
+        let githubButton = NSButton(title: "GitHub", target: self, action: #selector(openGitHub))
+        githubButton.bezelStyle = .inline
+        githubButton.isBordered = false
+        githubButton.font = .systemFont(ofSize: 12, weight: .medium)
+        githubButton.contentTintColor = .systemBlue
+        githubButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(githubButton)
+
+        NSLayoutConstraint.activate([
+            iconView.topAnchor.constraint(equalTo: container.topAnchor, constant: margin + 20),
+            iconView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 64),
+            iconView.heightAnchor.constraint(equalToConstant: 64),
+
+            nameLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 12),
+            nameLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+
+            versionLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+            versionLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+
+            descLabel.topAnchor.constraint(equalTo: versionLabel.bottomAnchor, constant: 16),
+            descLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 20),
+            descLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -(margin + 20)),
+
+            authorLabel.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 16),
+            authorLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+
+            githubButton.topAnchor.constraint(equalTo: authorLabel.bottomAnchor, constant: 8),
+            githubButton.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+        ])
+
+        return container
+    }
+
+
 
     // MARK: - Debug Section Collapse/Expand
 
     private func setDebugExpanded(_ expanded: Bool, animate: Bool) {
         debugIsExpanded = expanded
-
-        if expanded {
-            debugDisclosureButton.title = "Debug ▼"
-        } else {
-            debugDisclosureButton.title = "Debug ▶"
-        }
+        debugDisclosureButton.title = expanded ? "Debug ▼" : "Debug ▶"
 
         let alpha: CGFloat = expanded ? 1.0 : 0.0
 
@@ -338,36 +790,82 @@ class SettingsWindow: NSWindow {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.2
                 context.allowsImplicitAnimation = true
-                for view in debugContentViews {
+                for view in self.debugContentViews {
                     view.animator().alphaValue = alpha
                     view.isHidden = !expanded
                 }
-                // Resize window
-                self.adjustWindowHeight(expanded: expanded)
             }
         } else {
             for view in debugContentViews {
                 view.alphaValue = alpha
                 view.isHidden = !expanded
             }
-            adjustWindowHeight(expanded: expanded)
         }
-    }
-
-    private func adjustWindowHeight(expanded: Bool) {
-        let collapsedHeight: CGFloat = 370
-        let expandedHeight: CGFloat = 480
-        let targetHeight = expanded ? expandedHeight : collapsedHeight
-
-        var frame = self.frame
-        let delta = targetHeight - frame.height
-        frame.origin.y -= delta
-        frame.size.height = targetHeight
-        self.setFrame(frame, display: true, animate: true)
     }
 
     @objc private func toggleDebugSection() {
         setDebugExpanded(!debugIsExpanded, animate: true)
+    }
+
+    /// Expand the AI tab (called when user clicks translate without API key)
+    func expandTranslationSection() {
+        tabView.selectTabViewItem(withIdentifier: "ai")
+    }
+
+    private func updateAIStatus() {
+        if AISettings.isConfigured {
+            aiStatusLabel.stringValue = "Configured"
+            aiStatusLabel.textColor = .systemGreen
+        } else {
+            aiStatusLabel.stringValue = "Not Configured"
+            aiStatusLabel.textColor = .systemOrange
+        }
+    }
+
+    // MARK: - AI Auto-save
+
+    @objc private func aiFieldDidEndEditing(_ notification: Notification) {
+        saveAIFields()
+    }
+
+    @objc private func aiFieldDidChange(_ notification: Notification) {
+        saveAIFields()
+    }
+
+    private func saveAIFields() {
+        AISettings.apiKey = aiApiKeyField.stringValue
+        AISettings.apiEndpoint = aiEndpointField.stringValue
+        AISettings.model = aiModelField.stringValue
+        updateAIStatus()
+    }
+
+    // MARK: - AI Test Connection
+
+    @objc private func testAIConnection() {
+        saveAIFields()
+
+        guard AISettings.isConfigured else {
+            aiTestStatusLabel.stringValue = "Please enter an API key first"
+            aiTestStatusLabel.textColor = .systemOrange
+            return
+        }
+
+        aiTestButton.isEnabled = false
+        aiTestStatusLabel.stringValue = "Testing..."
+        aiTestStatusLabel.textColor = .secondaryLabelColor
+
+        AIService.shared.testConnection { [weak self] errorMessage in
+            guard let self = self else { return }
+            self.aiTestButton.isEnabled = true
+
+            if let error = errorMessage {
+                self.aiTestStatusLabel.stringValue = error
+                self.aiTestStatusLabel.textColor = .systemRed
+            } else {
+                self.aiTestStatusLabel.stringValue = "Connection successful"
+                self.aiTestStatusLabel.textColor = .systemGreen
+            }
+        }
     }
 
     // MARK: - Actions
@@ -399,7 +897,6 @@ class SettingsWindow: NSWindow {
             }
         } catch {
             logMessage("Launch at login error: \(error.localizedDescription)")
-            // Revert checkbox state on failure
             sender.state = enabled ? .off : .on
         }
     }
@@ -408,6 +905,12 @@ class SettingsWindow: NSWindow {
         let enabled = sender.state == .on
         UserDefaults.standard.set(enabled, forKey: "doubleClickToClosePin")
         logMessage("Double-click to close pin = \(enabled)")
+    }
+
+    @objc private func toggleTrackpadScrollZoom(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        UserDefaults.standard.set(enabled, forKey: "trackpadScrollAsZoom")
+        logMessage("Trackpad scroll as zoom = \(enabled)")
     }
 
     @objc private func toggleAlwaysOnboarding(_ sender: NSButton) {
@@ -430,15 +933,79 @@ class SettingsWindow: NSWindow {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            // Unregister login item before reset
             try? SMAppService.mainApp.unregister()
-            // Remove all UserDefaults for this app
             if let bundleId = Bundle.main.bundleIdentifier {
                 UserDefaults.standard.removePersistentDomain(forName: bundleId)
                 UserDefaults.standard.synchronize()
             }
             logMessage("Debug: Reset everything and quitting.")
             NSApp.terminate(nil)
+        }
+    }
+
+    // MARK: - Translation Actions
+
+    @objc private func openGoogleAIStudio() {
+        if let url = URL(string: "https://aistudio.google.com/apikey") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func openGitHub() {
+        if let url = URL(string: "https://github.com/giyyapan/Snipshot") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func translateLanguageChanged() {
+        if let selected = translateLanguagePopup.selectedItem?.title {
+            TranslateSettings.targetLanguage = selected
+            TranslateSettings.markLanguageUsed(selected)
+            rebuildSettingsLanguageMenu()
+            logMessage("Translation target language: \(selected)")
+        }
+    }
+
+    private func rebuildSettingsLanguageMenu() {
+        translateLanguagePopup.removeAllItems()
+        let recent = TranslateSettings.recentLanguages
+        let current = TranslateSettings.targetLanguage
+
+        for lang in recent {
+            translateLanguagePopup.addItem(withTitle: lang)
+        }
+
+        translateLanguagePopup.menu?.addItem(NSMenuItem.separator())
+
+        for lang in TranslateSettings.availableLanguages where !recent.contains(lang) {
+            translateLanguagePopup.addItem(withTitle: lang)
+        }
+
+        translateLanguagePopup.selectItem(withTitle: current)
+    }
+
+    @objc private func resetTranslatePrompt() {
+        translatePromptTextView.string = TranslateSettings.defaultSystemPrompt
+        TranslateSettings.rawSystemPrompt = TranslateSettings.defaultSystemPrompt
+        logMessage("Translation prompt reset to default")
+    }
+
+    @objc private func resetOCRRefinePrompt() {
+        ocrRefinePromptTextView.string = OCRRefineSettings.defaultSystemPrompt
+        OCRRefineSettings.rawSystemPrompt = OCRRefineSettings.defaultSystemPrompt
+        logMessage("OCR Refine prompt reset to default")
+    }
+}
+
+// MARK: - NSTextViewDelegate (for prompt text view)
+extension SettingsWindow: NSTextViewDelegate {
+    func textDidChange(_ notification: Notification) {
+        if let textView = notification.object as? NSTextView {
+            if textView === translatePromptTextView {
+                TranslateSettings.rawSystemPrompt = textView.string
+            } else if textView === ocrRefinePromptTextView {
+                OCRRefineSettings.rawSystemPrompt = textView.string
+            }
         }
     }
 }
@@ -510,7 +1077,6 @@ class HotkeyRecorderField: NSView {
     override func keyDown(with event: NSEvent) {
         guard isRecording else { super.keyDown(with: event); return }
 
-        // Esc cancels recording
         if event.keyCode == 53 {
             stopRecording()
             return
@@ -527,4 +1093,12 @@ class HotkeyRecorderField: NSView {
         if isRecording { stopRecording() }
         return super.resignFirstResponder()
     }
+}
+
+
+// MARK: - Flipped View (for scroll view document view)
+/// An NSView subclass that flips the coordinate system so Auto Layout constraints
+/// anchor from the top, which is needed for NSScrollView document views.
+class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }

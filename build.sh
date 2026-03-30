@@ -74,6 +74,7 @@ swiftc \
     -framework VisionKit \
     -framework ServiceManagement \
     -framework Sparkle \
+    -framework WebKit \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     "$PROJECT_DIR/Snipshot/main.swift" \
     "$PROJECT_DIR/Snipshot/AppDelegate.swift" \
@@ -81,10 +82,16 @@ swiftc \
     "$PROJECT_DIR/Snipshot/OverlayWindow.swift" \
     "$PROJECT_DIR/Snipshot/OverlayPanels.swift" \
     "$PROJECT_DIR/Snipshot/OCRMode.swift" \
+    "$PROJECT_DIR/Snipshot/OCRResultWindow.swift" \
     "$PROJECT_DIR/Snipshot/PinWindow.swift" \
     "$PROJECT_DIR/Snipshot/SettingsWindow.swift" \
     "$PROJECT_DIR/Snipshot/OnboardingWindow.swift" \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
+    "$PROJECT_DIR/Snipshot/AIService.swift" \
+    "$PROJECT_DIR/Snipshot/TranslateService.swift" \
+    "$PROJECT_DIR/Snipshot/TranslateMode.swift" \
+    "$PROJECT_DIR/Snipshot/AIResultWindow.swift" \
+    "$PROJECT_DIR/Snipshot/TranslateResultWindow.swift" \
     -o "$MACOS/Snipshot"
 
 # Copy resources

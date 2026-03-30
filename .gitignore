@@ -11,3 +11,4 @@ vendor/
 # Debug logs
 snapping_debug.log
 sync.sh
+keys.zip

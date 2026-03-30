@@ -82,6 +82,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupGlobalHotkey()
         }
 
+        // Listen for "open settings for translation" notification
+        NotificationCenter.default.addObserver(self, selector: #selector(openSettingsForTranslation), name: NSNotification.Name("OpenSettingsForTranslation"), object: nil)
+
         logMessage("Snipshot v\(kSnipshotVersion) ready. Capture hotkey: \(captureHotkey.displayString), F3 to pin from clipboard.")
     }
 
@@ -428,6 +431,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showDockIcon()
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openSettingsForTranslation() {
+        openSettings()
+        settingsWindow?.expandTranslationSection()
     }
 
     // MARK: - Onboarding
