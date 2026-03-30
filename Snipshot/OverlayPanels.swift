@@ -100,11 +100,11 @@ extension OverlayView {
 
         let tools = AnnotationTool.allCases
         let toolCount = CGFloat(tools.count)
-        let ocrCount: CGFloat = 1
+        let ocrCount: CGFloat = 2
         let actionCount: CGFloat = 4
 
         let toolsWidth = toolCount * btnSize + (toolCount - 1) * spacing
-        let ocrWidth = ocrCount * btnSize
+        let ocrWidth = ocrCount * btnSize + (ocrCount - 1) * spacing
         let actionsWidth = actionCount * btnSize + (actionCount - 1) * spacing
         let totalWidth = padding + toolsWidth + dividerW + ocrWidth + dividerW + actionsWidth + padding
         let h: CGFloat = 30
@@ -137,7 +137,12 @@ extension OverlayView {
         // OCR button
         let ocrBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "doc.text.viewfinder", tooltip: "OCR Text Recognition  O")
         ocrBtn.onPress = { [weak self] in self?.enterOCRMode() }
-        panel.addSubview(ocrBtn); bx += btnSize
+        panel.addSubview(ocrBtn); bx += btnSize + spacing
+
+        // Translate button
+        let translateBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "character.book.closed", tooltip: "Translate  Y")
+        translateBtn.onPress = { [weak self] in self?.enterTranslateMode() }
+        panel.addSubview(translateBtn); bx += btnSize
 
         // Divider 2
         bx += (dividerW) / 2

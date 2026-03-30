@@ -14,48 +14,54 @@ extension OverlayView {
         // Crop the selected region
         guard let croppedImage = cropImage() else { return }
 
-        mode = .ocrMode
-        annoState.currentTool = nil
-        annoState.selectedElementId = nil
+        logMessage("OCR: starting recognition...")
 
-        // Remove existing panels
-        removeAllPanels()
+        // Calculate screen position before dismissing overlay
+        let screenFrame = window?.screen?.frame ?? NSScreen.main?.frame ?? .zero
+        let windowOrigin = window?.frame.origin ?? .zero
+        let screenSelectionRect = NSRect(
+            x: selectionRect.origin.x + windowOrigin.x,
+            y: selectionRect.origin.y + windowOrigin.y,
+            width: selectionRect.width,
+            height: selectionRect.height
+        )
 
-        // Create an NSImageView to host the cropped image at the selection rect
-        let imgView = NSImageView(frame: selectionRect)
-        imgView.image = croppedImage
-        imgView.imageScaling = .scaleAxesIndependently
-        imgView.wantsLayer = true
-        addSubview(imgView)
-        ocrImageView = imgView
+        // Dismiss overlay first
+        onAction(.cancel)
 
-        // Create the VisionKit overlay
-        let overlay = ImageAnalysisOverlayView(frame: imgView.bounds)
-        overlay.autoresizingMask = [.width, .height]
-        overlay.trackingImageView = imgView
-        overlay.preferredInteractionTypes = .textSelection
-        overlay.isSupplementaryInterfaceHidden = true
-        imgView.addSubview(overlay)
-        ocrOverlayView = overlay
+        // Show the result window with the image immediately (OCR highlights appear when ready)
+        let resultWindow = OCRResultWindow(near: screenSelectionRect, screenFrame: screenFrame, image: croppedImage)
+        resultWindow.orderFront(nil)
+        let holder = OCRResultWindowHolder.shared
+        holder.window = resultWindow
 
-        // Show OCR panel
-        showOCRPanel()
+        // Prepare image data URL for AI refine in background
+        Task.detached(priority: .utility) {
+            let dataURL = AIService.shared.prepareImageDataURL(from: croppedImage)
+            await MainActor.run {
+                holder.cachedImageDataURL = dataURL
+            }
+        }
 
-        // Analyze the image
+        // Run OCR analysis
         Task { @MainActor in
             do {
                 let configuration = ImageAnalyzer.Configuration([.text])
                 let analysis = try await imageAnalyzer.analyze(croppedImage, orientation: .up, configuration: configuration)
-                overlay.analysis = analysis
-                logMessage("OCR analysis complete. Found text: \(analysis.transcript.prefix(100))")
-                // Highlight all text to indicate recognition is done
-                overlay.selectableItemsHighlighted = true
+                let ocrText = analysis.transcript
+                logMessage("OCR: recognition complete, \(ocrText.count) chars")
+
+                if ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    resultWindow.showError("No text recognized in the selected area.")
+                    return
+                }
+
+                resultWindow.showAnalysis(analysis)
             } catch {
-                logMessage("OCR analysis failed: \(error.localizedDescription)")
+                logMessage("OCR: recognition failed: \(error.localizedDescription)")
+                resultWindow.showError("OCR failed: \(error.localizedDescription)")
             }
         }
-
-        needsDisplay = true
     }
 
     func exitOCRMode() {
@@ -68,67 +74,18 @@ extension OverlayView {
     }
 
     func showOCRPanel() {
-        let btnSize: CGFloat = 26
-        let padding: CGFloat = 6
-        let spacing: CGFloat = 2
-
-        let totalWidth = padding + btnSize + spacing + btnSize + padding
-        let h: CGFloat = 30
-
-        let x = selectionRect.origin.x + selectionRect.width - totalWidth
-        let y = panelYPosition()
-
-        let panel = NSView(frame: NSRect(x: x, y: y, width: totalWidth, height: h))
-        panel.wantsLayer = true
-        panel.layer?.backgroundColor = NSColor(white: 0.95, alpha: 0.92).cgColor
-        panel.layer?.cornerRadius = 6; panel.layer?.masksToBounds = true
-
-        let by = (h - btnSize) / 2
-        var bx = padding
-
-        // Copy All button (doc.on.doc icon)
-        let copyAllBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "doc.on.doc", tooltip: "Copy All  \u{2318}C")
-        copyAllBtn.onPress = { [weak self] in self?.ocrCopyAll() }
-        panel.addSubview(copyAllBtn)
-        bx += btnSize + spacing
-
-        // Done button (checkmark icon)
-        let doneBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "checkmark", tooltip: "Done  Esc")
-        doneBtn.onPress = { [weak self] in self?.ocrDone() }
-        panel.addSubview(doneBtn)
-
-        addSubview(panel)
-        ocrPanelView = panel
+        // Legacy: kept for compatibility but no longer used in new flow
     }
 
     func ocrCopyAll() {
-        guard let overlay = ocrOverlayView else { return }
-        let allText = overlay.text
-        if !allText.isEmpty {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(allText, forType: .string)
-            logMessage("OCR: Copied all text to clipboard (\(allText.count) chars).")
-        }
-        // Exit after copying all
-        exitOCRMode()
-        onAction(.cancel)
+        // Legacy: kept for compatibility
     }
 
     func ocrDone() {
-        exitOCRMode()
-        onAction(.cancel)
+        // Legacy: kept for compatibility
     }
 
     func ocrCopySelectedOrAll() {
-        guard let overlay = ocrOverlayView else { return }
-        let selectedText = overlay.selectedText
-        let textToCopy = selectedText.isEmpty ? overlay.text : selectedText
-        if !textToCopy.isEmpty {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(textToCopy, forType: .string)
-            logMessage("OCR: Copied text to clipboard (\(textToCopy.count) chars).")
-        }
+        // Legacy: kept for compatibility
     }
 }
