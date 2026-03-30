@@ -105,7 +105,9 @@ class OverlayView: NSView {
     var infoPanelView: NSView?
     var bottomBarView: NSView?
     var secondaryPanelView: NSView?
-    var textField: NSTextField?
+    var textField: NSTextField?  // kept for type compat; actual editing uses textEditView
+    var textEditView: NSTextView?
+    var textEditScrollView: NSScrollView?
 
     // Annotation state
     var annoState = AnnotationState()
@@ -722,44 +724,74 @@ class OverlayView: NSView {
         (colorText as NSString).draw(at: textOrigin, withAttributes: textAttrs)
     }
 
-    /// Draw post-selection help tips in the bottom-left corner.
+    /// Draw post-selection help tips in the bottom-left corner with grouped sections.
     private func drawPostSelectionTips() {
-        let tips: [(String, String)] = [
-            ("Click", "Select annotation"),
-            ("Backspace", "Delete selected"),
-            ("F3", "Pin to screen"),
-            ("Pinned", "Drag to move"),
-            ("", "Scroll to resize"),
-            ("", "\u{2318}+Scroll for opacity"),
-            ("", "[ ] to adjust opacity"),
+        // Each section: (header, [(key, description)])
+        let sections: [(String, [(String, String)])] = [
+            ("Annotation", [
+                ("Click", "Select element"),
+                ("Backspace", "Delete selected"),
+                ("Double-click", "Edit text"),
+                ("Shift+Enter", "New line in text"),
+            ]),
+            ("Pin (F3)", [
+                ("Drag", "Move pinned image"),
+                ("Scroll", "Resize"),
+                ("\u{2318}+Scroll", "Adjust opacity"),
+                ("[ ]", "Adjust opacity"),
+            ]),
         ]
 
-        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        let descFont = NSFont.systemFont(ofSize: 12, weight: .regular)
-        let keyAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
-        let descAttrs: [NSAttributedString.Key: Any] = [.font: descFont, .foregroundColor: NSColor(white: 0.75, alpha: 1.0)]
+        let headerFont = NSFont.systemFont(ofSize: 11, weight: .bold)
+        let keyFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+        let descFont = NSFont.systemFont(ofSize: 11, weight: .regular)
+        let headerAttrs: [NSAttributedString.Key: Any] = [.font: headerFont, .foregroundColor: NSColor(white: 0.95, alpha: 1.0)]
+        let keyAttrs: [NSAttributedString.Key: Any] = [.font: keyFont, .foregroundColor: NSColor.white]
+        let descAttrs: [NSAttributedString.Key: Any] = [.font: descFont, .foregroundColor: NSColor(white: 0.7, alpha: 1.0)]
 
         let padding: CGFloat = 10
-        let lineSpacing: CGFloat = 4
+        let lineSpacing: CGFloat = 3
+        let sectionSpacing: CGFloat = 8
         let keyDescGap: CGFloat = 8
+
+        // Measure all content
+        let sampleSize = ("Xg" as NSString).size(withAttributes: keyAttrs)
+        let lineHeight = sampleSize.height
+        let headerHeight = ("Xg" as NSString).size(withAttributes: headerAttrs).height
 
         var maxKeyWidth: CGFloat = 0
         var maxDescWidth: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        for (key, desc) in tips {
-            let ks = key.isEmpty ? CGSize.zero : (key as NSString).size(withAttributes: keyAttrs)
-            let ds = (desc as NSString).size(withAttributes: descAttrs)
-            maxKeyWidth = max(maxKeyWidth, ks.width)
-            maxDescWidth = max(maxDescWidth, ds.width)
-            lineHeight = max(lineHeight, max(ks.height, ds.height))
+        for (_, items) in sections {
+            for (key, desc) in items {
+                let ks = (key as NSString).size(withAttributes: keyAttrs)
+                let ds = (desc as NSString).size(withAttributes: descAttrs)
+                maxKeyWidth = max(maxKeyWidth, ks.width)
+                maxDescWidth = max(maxDescWidth, ds.width)
+            }
         }
+        // Header widths are considered via maxHeaderWidth below
 
-        let boxWidth = padding + maxKeyWidth + keyDescGap + maxDescWidth + padding
-        let boxHeight = padding + CGFloat(tips.count) * lineHeight + CGFloat(tips.count - 1) * lineSpacing + padding
+        let contentWidth = maxKeyWidth + keyDescGap + maxDescWidth
+        var maxHeaderWidth: CGFloat = 0
+        for (header, _) in sections {
+            maxHeaderWidth = max(maxHeaderWidth, (header as NSString).size(withAttributes: headerAttrs).width)
+        }
+        let boxWidth = padding + max(contentWidth, maxHeaderWidth) + padding
+
+        // Calculate total height
+        var totalHeight: CGFloat = padding
+        for (i, (_, items)) in sections.enumerated() {
+            totalHeight += headerHeight + lineSpacing  // header + gap
+            totalHeight += CGFloat(items.count) * lineHeight + CGFloat(items.count - 1) * lineSpacing
+            if i < sections.count - 1 {
+                totalHeight += sectionSpacing
+            }
+        }
+        totalHeight += padding
 
         let margin: CGFloat = 12
         let boxOrigin = NSPoint(x: bounds.minX + margin, y: bounds.minY + margin)
-        let boxRect = NSRect(x: boxOrigin.x, y: boxOrigin.y, width: boxWidth, height: boxHeight)
+        let boxRect = NSRect(x: boxOrigin.x, y: boxOrigin.y, width: boxWidth, height: totalHeight)
 
         // Hide if mouse is near
         if let mousePos = currentMousePosition {
@@ -767,17 +799,31 @@ class OverlayView: NSView {
             if expandedRect.contains(mousePos) { return }
         }
 
-        NSColor.black.withAlphaComponent(0.7).setFill()
+        NSColor.black.withAlphaComponent(0.75).setFill()
         NSBezierPath(roundedRect: boxRect, xRadius: 6, yRadius: 6).fill()
 
-        var y = boxOrigin.y + boxHeight - padding - lineHeight
-        for (key, desc) in tips {
-            if !key.isEmpty {
+        // Draw from top
+        var y = boxOrigin.y + totalHeight - padding
+        for (i, (header, items)) in sections.enumerated() {
+            // Draw header
+            y -= headerHeight
+            (header as NSString).draw(at: NSPoint(x: boxOrigin.x + padding, y: y), withAttributes: headerAttrs)
+            y -= lineSpacing
+
+            // Draw items
+            for (j, (key, desc)) in items.enumerated() {
+                y -= lineHeight
                 (key as NSString).draw(at: NSPoint(x: boxOrigin.x + padding, y: y), withAttributes: keyAttrs)
+                let descX = boxOrigin.x + padding + maxKeyWidth + keyDescGap
+                (desc as NSString).draw(at: NSPoint(x: descX, y: y), withAttributes: descAttrs)
+                if j < items.count - 1 {
+                    y -= lineSpacing
+                }
             }
-            let descX = key.isEmpty ? boxOrigin.x + padding : boxOrigin.x + padding + maxKeyWidth + keyDescGap
-            (desc as NSString).draw(at: NSPoint(x: descX, y: y), withAttributes: descAttrs)
-            y -= lineHeight + lineSpacing
+
+            if i < sections.count - 1 {
+                y -= sectionSpacing
+            }
         }
     }
 
@@ -1326,10 +1372,9 @@ class OverlayView: NSView {
             }
             if event.keyCode == 36 {
                 if flags.contains(.shift) {
-                    // Shift+Enter: insert newline into text field
-                    if let tf = textField, let editor = tf.currentEditor() {
-                        editor.insertNewline(nil)
-                    }
+                    // Shift+Enter: insert newline (NSTextView handles this natively)
+                    textEditView?.insertNewline(nil)
+                    resizeTextEditor()
                     return
                 }
                 commitTextEditing()
@@ -1437,114 +1482,134 @@ class OverlayView: NSView {
         super.flagsChanged(with: event)
     }
 
-    // MARK: - Text Editing
+    // MARK: - Text Editing (NSTextView-based for multi-line support)
     func showTextEditor(for element: AnnotationElement) {
         let fontSize = element.strokeWidth * 4
         let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
 
-        // Calculate the actual text size to determine field height precisely
         let sampleAttrs: [NSAttributedString.Key: Any] = [.font: font]
         let textSize = ("Xg" as NSString).size(withAttributes: sampleAttrs)
-        let fieldHeight = textSize.height + 4  // minimal padding
+        let singleLineHeight = textSize.height
 
-        // Click position = visual top-left corner of text (Figma style).
-        // In macOS standard coordinates (y-up), visual top-left has the HIGHEST y value.
-        // NSString.draw(at:) in non-flipped view: point is the left-bottom of text bounding box.
-        // So element.startPoint (used by drawText) should be at clickY - textHeight.
-        let textHeight = textSize.height
-        let textInsetY: CGFloat = -font.descender + 1  // offset from NSTextField frame bottom to text draw point
+        // Only adjust startPoint for NEW text elements (empty text = just created).
+        let isNewElement = element.text.isEmpty
+        if isNewElement {
+            let clickY = element.startPoint.y
+            element.startPoint.y = clickY - singleLineHeight
+        }
 
-        // Store the draw position for drawText (left-bottom of text)
-        let clickY = element.startPoint.y  // visual top-left y in view coords
-        element.startPoint.y = clickY - textHeight  // left-bottom for NSString.draw(at:)
-
-        // NSTextField frame.origin.y is its bottom edge.
-        // The text inside NSTextField renders at frame.origin.y + textInsetY.
-        // We want that to equal element.startPoint.y, so:
-        let fieldY = element.startPoint.y - textInsetY
-
-        // Field position
+        // Calculate frame position: element.startPoint is the draw origin (left-bottom of text)
+        // NSTextView in a non-flipped view: frame.origin.y is the bottom edge
         let screenPt = NSPoint(
             x: element.startPoint.x + selectionRect.origin.x,
-            y: fieldY + selectionRect.origin.y
+            y: element.startPoint.y + selectionRect.origin.y
         )
 
-        // Start with a minimal width; will grow as user types
-        let minWidth: CGFloat = 40
-        let tf = NSTextField(frame: NSRect(x: screenPt.x, y: screenPt.y, width: minWidth, height: fieldHeight))
-        tf.font = font
-        tf.textColor = element.color
-        tf.backgroundColor = .clear
-        tf.drawsBackground = false
-        tf.isBordered = false
-        tf.focusRingType = .none
-        tf.isEditable = true
-        tf.isSelectable = true
-        tf.placeholderString = ""
-        tf.stringValue = element.text
-        tf.target = self
-        tf.action = #selector(textFieldAction(_:))
-        tf.cell?.wraps = false
-        tf.cell?.isScrollable = true
+        // Calculate width from content
+        let minWidth: CGFloat = 60
+        let contentWidth: CGFloat
+        if !element.text.isEmpty {
+            let lines = element.text.components(separatedBy: "\n")
+            let maxLineWidth = lines.map { ($0 as NSString).size(withAttributes: sampleAttrs).width }.max() ?? 0
+            contentWidth = maxLineWidth + 16
+        } else {
+            contentWidth = minWidth
+        }
+        let fieldWidth = max(minWidth, contentWidth)
 
-        addSubview(tf)
-        tf.becomeFirstResponder()
-        textField = tf
+        // Calculate height based on number of lines
+        let lineCount = max(1, element.text.components(separatedBy: "\n").count)
+        let fieldHeight = singleLineHeight * CGFloat(lineCount) + 8
 
-        // Observe text changes to auto-resize width
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textFieldDidChange(_:)),
-            name: NSControl.textDidChangeNotification,
-            object: tf
-        )
+        // Create NSTextView wrapped in NSScrollView
+        let scrollView = NSScrollView(frame: NSRect(x: screenPt.x, y: screenPt.y, width: fieldWidth, height: fieldHeight))
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: fieldWidth, height: fieldHeight))
+        tv.font = font
+        tv.textColor = element.color
+        tv.backgroundColor = .clear
+        tv.drawsBackground = false
+        tv.isEditable = true
+        tv.isSelectable = true
+        tv.isRichText = false
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isFieldEditor = false
+        tv.textContainerInset = NSSize(width: 0, height: 0)
+        tv.textContainer?.lineFragmentPadding = 2
+        tv.string = element.text
+        tv.delegate = self
+
+        scrollView.documentView = tv
+        addSubview(scrollView)
+        window?.makeFirstResponder(tv)
+
+        textEditView = tv
+        textEditScrollView = scrollView
     }
 
-    @objc func textFieldDidChange(_ notification: Notification) {
-        guard let tf = textField else { return }
-        let font = tf.font ?? NSFont.systemFont(ofSize: 14)
-        let text = tf.stringValue.isEmpty ? "W" : tf.stringValue
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        let textWidth = (text as NSString).size(withAttributes: attrs).width
-        let minWidth: CGFloat = 40
-        let newWidth = max(minWidth, textWidth + 20) // padding for cursor
-        var frame = tf.frame
+    /// Auto-resize the text editor based on content
+    func resizeTextEditor() {
+        guard let tv = textEditView, let sv = textEditScrollView else { return }
+        let font = tv.font ?? NSFont.systemFont(ofSize: 14)
+        let sampleAttrs: [NSAttributedString.Key: Any] = [.font: font]
+        let singleLineHeight = ("Xg" as NSString).size(withAttributes: sampleAttrs).height
+
+        let text = tv.string.isEmpty ? "W" : tv.string
+        let lines = text.components(separatedBy: "\n")
+        let maxLineWidth = lines.map { ($0 as NSString).size(withAttributes: sampleAttrs).width }.max() ?? 0
+        let lineCount = max(1, lines.count)
+
+        let minWidth: CGFloat = 60
+        let newWidth = max(minWidth, maxLineWidth + 16)
+        let newHeight = singleLineHeight * CGFloat(lineCount) + 8
+
+        var frame = sv.frame
         frame.size.width = newWidth
-        tf.frame = frame
-    }
+        // Grow upward (keep bottom edge fixed in non-flipped view)
+        let heightDelta = newHeight - frame.size.height
+        frame.origin.y -= heightDelta
+        frame.size.height = newHeight
+        sv.frame = frame
 
-    @objc func textFieldAction(_ sender: NSTextField) {
-        commitTextEditing()
-        mode = .annotating
-        needsDisplay = true
+        tv.frame = NSRect(x: 0, y: 0, width: newWidth, height: newHeight)
     }
 
     func commitTextEditing() {
-        if let tf = textField {
-            NotificationCenter.default.removeObserver(self, name: NSControl.textDidChangeNotification, object: tf)
-        }
-        if let tf = textField, let sel = annoState.selectedElement, sel.tool == .text {
-            sel.text = tf.stringValue
+        if let tv = textEditView, let sel = annoState.selectedElement, sel.tool == .text {
+            sel.text = tv.string
             if sel.text.isEmpty {
                 annoState.elements.removeAll { $0.id == sel.id }
                 annoState.selectedElementId = nil
             }
         }
-        textField?.removeFromSuperview()
+        textEditScrollView?.removeFromSuperview()
+        textEditScrollView = nil
+        textEditView = nil
         textField = nil
         window?.makeFirstResponder(self)
     }
 
     func cancelTextEditing() {
-        if let tf = textField {
-            NotificationCenter.default.removeObserver(self, name: NSControl.textDidChangeNotification, object: tf)
-        }
-        if let sel = annoState.selectedElement, sel.tool == .text {
+        if let sel = annoState.selectedElement, sel.tool == .text, sel.text.isEmpty {
             annoState.elements.removeAll { $0.id == sel.id }
             annoState.selectedElementId = nil
         }
-        textField?.removeFromSuperview()
+        textEditScrollView?.removeFromSuperview()
+        textEditScrollView = nil
+        textEditView = nil
         textField = nil
         window?.makeFirstResponder(self)
+    }
+}
+
+// MARK: - NSTextViewDelegate for text annotation editing
+extension OverlayView: NSTextViewDelegate {
+    func textDidChange(_ notification: Notification) {
+        resizeTextEditor()
     }
 }
