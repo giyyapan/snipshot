@@ -903,8 +903,8 @@ class OverlayView: NSView {
                 context.cgContext.clip(to: selectionRect)
 
                 for element in annoState.elements {
-                    // Skip drawing text element while it's being edited (textField is visible)
-                    if element.tool == .text && element.id == annoState.selectedElementId && textField != nil {
+                    // Skip drawing text element while it's being edited (textEditView is visible)
+                    if element.tool == .text && element.id == annoState.selectedElementId && textEditView != nil {
                         continue
                     }
                     let isSelected = element.id == annoState.selectedElementId
@@ -1580,11 +1580,20 @@ class OverlayView: NSView {
     }
 
     func commitTextEditing() {
-        if let tv = textEditView, let sel = annoState.selectedElement, sel.tool == .text {
+        if let tv = textEditView, let sv = textEditScrollView, let sel = annoState.selectedElement, sel.tool == .text {
             sel.text = tv.string
             if sel.text.isEmpty {
                 annoState.elements.removeAll { $0.id == sel.id }
                 annoState.selectedElementId = nil
+            } else {
+                // Recalculate startPoint from the scrollView's frame.
+                // The scrollView's frame.origin.y is its bottom edge in the overlay view.
+                // We need to convert back to the element's coordinate system (relative to selectionRect).
+                // NSString.draw(at:) draws from the bottom-left of the text bounding box.
+                // The scrollView bottom = element.startPoint.y + selectionRect.origin.y
+                // So element.startPoint.y = scrollView.frame.origin.y - selectionRect.origin.y
+                sel.startPoint.x = sv.frame.origin.x - selectionRect.origin.x
+                sel.startPoint.y = sv.frame.origin.y - selectionRect.origin.y
             }
         }
         textEditScrollView?.removeFromSuperview()
