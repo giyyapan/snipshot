@@ -235,7 +235,8 @@ class AIService: NSObject, URLSessionDataDelegate {
             "model": AISettings.model,
             "messages": messages.map { $0.toDict() },
             "temperature": temperature,
-            "stream": true
+            "stream": true,
+            "reasoning_effort": "none"
         ]
 
         do {
