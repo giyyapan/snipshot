@@ -43,6 +43,24 @@ class OverlayWindow: NSPanel {
     // With .nonactivatingPanel, becoming key does NOT activate the owning app.
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    // Auto-dismiss when the overlay loses key window status (e.g. another window steals focus).
+    // This prevents the overlay from getting stuck with no way to close it.
+    // Only exception: NSSavePanel taking key is expected during save flow.
+    override func resignKey() {
+        super.resignKey()
+        // Defer to next runloop tick to let window state settle.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.isVisible else { return }
+            // Check if any visible NSSavePanel exists, not just keyWindow.
+            // On first app activation, NSSavePanel may be visible but not yet key.
+            let hasSavePanel = NSApp.windows.contains { $0 is NSSavePanel && $0.isVisible }
+            if hasSavePanel { return }
+            if let overlayView = self.contentView as? OverlayView {
+                overlayView.onAction(.cancel)
+            }
+        }
+    }
 }
 
 // MARK: - Resize Handle (selection)

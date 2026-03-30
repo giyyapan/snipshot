@@ -373,8 +373,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     try? pngData.write(to: url)
                     logMessage("Image saved to \(url.path)")
                 }
+                self?.dismissOverlay()
+            } else {
+                // User cancelled save — restore overlay as key window
+                self?.overlayWindow?.makeKeyAndOrderFront(nil)
             }
-            self?.dismissOverlay()
         }
     }
 
