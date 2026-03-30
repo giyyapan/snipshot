@@ -1483,6 +1483,15 @@ class OverlayView: NSView {
     }
 
     // MARK: - Text Editing (NSTextView-based for multi-line support)
+    //
+    // Coordinate convention: element.startPoint stores the TOP-LEFT corner of the text
+    // in selection-relative coordinates (non-flipped: higher Y = higher on screen).
+    //
+    // For NSString.draw(at:): point is bottom-left, so drawY = startPoint.y - textHeight
+    // For NSScrollView frame: origin.y is bottom edge, top = origin.y + height
+    //   So sv.origin.y = screenTopY - fieldHeight, where screenTopY = startPoint.y + selectionRect.origin.y
+    // On commit: startPoint.y = (sv.origin.y + sv.height) - selectionRect.origin.y
+
     func showTextEditor(for element: AnnotationElement) {
         let fontSize = element.strokeWidth * 4
         let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
@@ -1491,19 +1500,8 @@ class OverlayView: NSView {
         let textSize = ("Xg" as NSString).size(withAttributes: sampleAttrs)
         let singleLineHeight = textSize.height
 
-        // Only adjust startPoint for NEW text elements (empty text = just created).
-        let isNewElement = element.text.isEmpty
-        if isNewElement {
-            let clickY = element.startPoint.y
-            element.startPoint.y = clickY - singleLineHeight
-        }
-
-        // Calculate frame position: element.startPoint is the draw origin (left-bottom of text)
-        // NSTextView in a non-flipped view: frame.origin.y is the bottom edge
-        let screenPt = NSPoint(
-            x: element.startPoint.x + selectionRect.origin.x,
-            y: element.startPoint.y + selectionRect.origin.y
-        )
+        // For NEW elements, startPoint is the click position = top-left. No adjustment needed.
+        // For existing elements (re-edit), startPoint is already the stored top-left.
 
         // Calculate width from content
         let minWidth: CGFloat = 60
@@ -1519,10 +1517,18 @@ class OverlayView: NSView {
 
         // Calculate height based on number of lines
         let lineCount = max(1, element.text.components(separatedBy: "\n").count)
-        let fieldHeight = singleLineHeight * CGFloat(lineCount) + 8
+        let fieldHeight = singleLineHeight * CGFloat(lineCount) + 4
+
+        // Convert startPoint (top-left, selection-relative) to screen coordinates.
+        // In non-flipped view: scrollView.frame.origin.y is bottom edge.
+        // Top of scrollView = origin.y + height = startPoint.y + selectionRect.origin.y
+        // So origin.y = startPoint.y + selectionRect.origin.y - fieldHeight
+        let screenTopY = element.startPoint.y + selectionRect.origin.y
+        let svOriginY = screenTopY - fieldHeight
+        let svOriginX = element.startPoint.x + selectionRect.origin.x
 
         // Create NSTextView wrapped in NSScrollView
-        let scrollView = NSScrollView(frame: NSRect(x: screenPt.x, y: screenPt.y, width: fieldWidth, height: fieldHeight))
+        let scrollView = NSScrollView(frame: NSRect(x: svOriginX, y: svOriginY, width: fieldWidth, height: fieldHeight))
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
@@ -1552,7 +1558,8 @@ class OverlayView: NSView {
         textEditScrollView = scrollView
     }
 
-    /// Auto-resize the text editor based on content
+    /// Auto-resize the text editor based on content.
+    /// Grows downward from the fixed top edge (non-flipped: top = origin.y + height stays constant).
     func resizeTextEditor() {
         guard let tv = textEditView, let sv = textEditScrollView else { return }
         let font = tv.font ?? NSFont.systemFont(ofSize: 14)
@@ -1566,14 +1573,14 @@ class OverlayView: NSView {
 
         let minWidth: CGFloat = 60
         let newWidth = max(minWidth, maxLineWidth + 16)
-        let newHeight = singleLineHeight * CGFloat(lineCount) + 8
+        let newHeight = singleLineHeight * CGFloat(lineCount) + 4
 
+        // Keep top edge fixed: top = origin.y + height
+        let currentTop = sv.frame.origin.y + sv.frame.height
         var frame = sv.frame
         frame.size.width = newWidth
-        // Grow upward (keep bottom edge fixed in non-flipped view)
-        let heightDelta = newHeight - frame.size.height
-        frame.origin.y -= heightDelta
         frame.size.height = newHeight
+        frame.origin.y = currentTop - newHeight  // grow downward from fixed top
         sv.frame = frame
 
         tv.frame = NSRect(x: 0, y: 0, width: newWidth, height: newHeight)
@@ -1586,14 +1593,11 @@ class OverlayView: NSView {
                 annoState.elements.removeAll { $0.id == sel.id }
                 annoState.selectedElementId = nil
             } else {
-                // Recalculate startPoint from the scrollView's frame.
-                // The scrollView's frame.origin.y is its bottom edge in the overlay view.
-                // We need to convert back to the element's coordinate system (relative to selectionRect).
-                // NSString.draw(at:) draws from the bottom-left of the text bounding box.
-                // The scrollView bottom = element.startPoint.y + selectionRect.origin.y
-                // So element.startPoint.y = scrollView.frame.origin.y - selectionRect.origin.y
+                // Recover top-left from scrollView frame.
+                // Top of scrollView in screen coords = sv.frame.origin.y + sv.frame.height
+                // startPoint (selection-relative) = screen - selectionRect.origin
                 sel.startPoint.x = sv.frame.origin.x - selectionRect.origin.x
-                sel.startPoint.y = sv.frame.origin.y - selectionRect.origin.y
+                sel.startPoint.y = (sv.frame.origin.y + sv.frame.height) - selectionRect.origin.y
             }
         }
         textEditScrollView?.removeFromSuperview()

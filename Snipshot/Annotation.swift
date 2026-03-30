@@ -97,7 +97,8 @@ class AnnotationElement {
         let font = NSFont.systemFont(ofSize: strokeWidth * 4, weight: .medium)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let size = (text as NSString).size(withAttributes: attrs)
-        return NSRect(x: startPoint.x - 4, y: startPoint.y - 2, width: size.width + 8, height: size.height + 4)
+        // startPoint is TOP-LEFT. In non-flipped view, bounding rect origin is bottom-left.
+        return NSRect(x: startPoint.x - 4, y: startPoint.y - size.height - 2, width: size.width + 8, height: size.height + 4)
     }
 
     func hitTest(point: NSPoint) -> Bool {
@@ -431,7 +432,12 @@ class AnnotationRenderer {
         ]
         // Don't render empty text elements
         guard !element.text.isEmpty else { return }
-        let point = NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy)
+        // startPoint is the TOP-LEFT of the text in selection-relative coords.
+        // NSString.draw(at:) expects the BOTTOM-LEFT of the text bounding box.
+        // In non-flipped view: bottom-left Y = top-left Y - textHeight
+        let textSize = (element.text as NSString).size(withAttributes: attrs)
+        let drawY = element.startPoint.y + oy - textSize.height
+        let point = NSPoint(x: element.startPoint.x + ox, y: drawY)
         (element.text as NSString).draw(at: point, withAttributes: attrs)
     }
 
