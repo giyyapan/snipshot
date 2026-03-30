@@ -82,6 +82,7 @@ enum InteractionMode: Equatable {
     case resizingAnnotation(AnnoResizeHandle)
     case editingText
     case ocrMode
+    case pluginInput
 }
 
 // MARK: - OverlayView
@@ -147,6 +148,11 @@ class OverlayView: NSView {
     // Window snapping
     var windowFrames: [NSRect] = []
     var hoveredWindowFrame: NSRect? = nil
+
+    // Plugin state
+    var activePlugin: Plugin? = nil
+    var pluginPanelView: NSView?
+    var pluginInputField: NSTextField?
 
     init(frame: NSRect, screenshot: NSImage, onAction: @escaping (OverlayAction) -> Void) {
         self.screenshot = screenshot
@@ -1242,6 +1248,16 @@ class OverlayView: NSView {
             return
         }
 
+        // Plugin mode
+        if mode == .pluginInput {
+            if event.keyCode == 53 { // Escape
+                exitPluginMode()
+                mode = .selected; showAllPanels(); needsDisplay = true
+                return
+            }
+            // Let Enter and other keys pass through to the text field
+            return
+        }
         // OCR mode
         if mode == .ocrMode {
             if event.keyCode == 53 { // Escape

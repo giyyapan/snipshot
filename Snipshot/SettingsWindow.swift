@@ -68,7 +68,7 @@ class SettingsWindow: NSWindow {
         currentConfig = HotkeyConfig(keyCode: savedKeyCode, modifiers: NSEvent.ModifierFlags(rawValue: savedModifiers))
 
         let width: CGFloat = 400
-        let height: CGFloat = 370
+        let height: CGFloat = 460
         let screenFrame = NSScreen.main?.frame ?? .zero
         let rect = NSRect(
             x: (screenFrame.width - width) / 2,
@@ -197,7 +197,7 @@ class SettingsWindow: NSWindow {
         contentView.addSubview(dblClickDesc)
 
         // =====================================================================
-        // Separator 2 (before debug)
+        // Separator 2 (before plugins)
         // =====================================================================
         let separator2 = NSBox()
         separator2.boxType = .separator
@@ -205,7 +205,37 @@ class SettingsWindow: NSWindow {
         contentView.addSubview(separator2)
 
         // =====================================================================
-        // Section 3: Debug (collapsible, subtle entry)
+        // Section 3: Plugins
+        // =====================================================================
+        let pluginsTitle = NSTextField(labelWithString: "Plugins")
+        pluginsTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        pluginsTitle.textColor = .labelColor
+        pluginsTitle.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(pluginsTitle)
+
+        let pluginCount = PluginManager.shared.plugins.count
+        let pluginsDesc = NSTextField(labelWithString: "\(pluginCount) plugin(s) loaded from ~/.snipshot/plugins/")
+        pluginsDesc.font = .systemFont(ofSize: 11, weight: .regular)
+        pluginsDesc.textColor = .secondaryLabelColor
+        pluginsDesc.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(pluginsDesc)
+
+        let openPluginsFolderBtn = NSButton(title: "Open Plugins Folder", target: self, action: #selector(openPluginsFolder))
+        openPluginsFolderBtn.bezelStyle = .rounded
+        openPluginsFolderBtn.controlSize = .regular
+        openPluginsFolderBtn.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(openPluginsFolderBtn)
+
+        // =====================================================================
+        // Separator 3 (before debug)
+        // =====================================================================
+        let separator3 = NSBox()
+        separator3.boxType = .separator
+        separator3.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(separator3)
+
+        // =====================================================================
+        // Section 4: Debug (collapsible, subtle entry)
         // =====================================================================
         // Use a small clickable text button as the disclosure trigger
         debugDisclosureButton = NSButton(title: "Debug ▶", target: self, action: #selector(toggleDebugSection))
@@ -295,8 +325,23 @@ class SettingsWindow: NSWindow {
             separator2.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
             separator2.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
 
+            // Plugins section
+            pluginsTitle.topAnchor.constraint(equalTo: separator2.bottomAnchor, constant: sectionGap),
+            pluginsTitle.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            pluginsDesc.topAnchor.constraint(equalTo: pluginsTitle.bottomAnchor, constant: descGap + 2),
+            pluginsDesc.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            openPluginsFolderBtn.topAnchor.constraint(equalTo: pluginsDesc.bottomAnchor, constant: itemGap),
+            openPluginsFolderBtn.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+
+            // Separator 3
+            separator3.topAnchor.constraint(equalTo: openPluginsFolderBtn.bottomAnchor, constant: sectionGap),
+            separator3.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
+            separator3.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -margin),
+
             // Debug disclosure button (subtle, small)
-            debugDisclosureButton.topAnchor.constraint(equalTo: separator2.bottomAnchor, constant: 10),
+            debugDisclosureButton.topAnchor.constraint(equalTo: separator3.bottomAnchor, constant: 10),
             debugDisclosureButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: margin),
 
             // Debug content (initially hidden via constraints)
@@ -355,8 +400,8 @@ class SettingsWindow: NSWindow {
     }
 
     private func adjustWindowHeight(expanded: Bool) {
-        let collapsedHeight: CGFloat = 370
-        let expandedHeight: CGFloat = 480
+        let collapsedHeight: CGFloat = 460
+        let expandedHeight: CGFloat = 570
         let targetHeight = expanded ? expandedHeight : collapsedHeight
 
         var frame = self.frame
@@ -379,6 +424,10 @@ class SettingsWindow: NSWindow {
         UserDefaults.standard.set(defaultConfig.keyCode, forKey: "captureHotkeyKeyCode")
         UserDefaults.standard.set(defaultConfig.modifiers.rawValue, forKey: "captureHotkeyModifiers")
         onHotkeyChanged?(defaultConfig)
+    }
+
+    @objc private func openPluginsFolder() {
+        PluginManager.shared.openPluginsFolder()
     }
 
     @objc private func toggleAutoCopy(_ sender: NSButton) {

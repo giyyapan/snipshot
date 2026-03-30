@@ -64,6 +64,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupStatusItem()
 
+        // Load plugins
+        PluginManager.shared.loadPlugins()
+
         // Reset onboarding state if permissions were revoked since last run
         OnboardingWindow.resetIfPermissionsRevoked()
 

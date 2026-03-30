@@ -29,6 +29,8 @@ extension OverlayView {
         secondaryPanelView?.removeFromSuperview(); secondaryPanelView = nil
         textField?.removeFromSuperview(); textField = nil
         ocrPanelView?.removeFromSuperview(); ocrPanelView = nil
+        pluginPanelView?.removeFromSuperview(); pluginPanelView = nil
+        pluginInputField = nil
         toolButtons.removeAll()
         colorDots.removeAll()
     }
@@ -47,7 +49,7 @@ extension OverlayView {
     }
 
     func isPointInPanel(_ point: NSPoint) -> Bool {
-        for panel in [bottomBarView, infoPanelView, secondaryPanelView, ocrPanelView] {
+        for panel in [bottomBarView, infoPanelView, secondaryPanelView, ocrPanelView, pluginPanelView] {
             if let p = panel, p.frame.contains(point) { return true }
         }
         return false
@@ -102,11 +104,15 @@ extension OverlayView {
         let toolCount = CGFloat(tools.count)
         let ocrCount: CGFloat = 1
         let actionCount: CGFloat = 4
+        let plugins = PluginManager.shared.plugins
+        let pluginCount = CGFloat(plugins.count)
 
         let toolsWidth = toolCount * btnSize + (toolCount - 1) * spacing
         let ocrWidth = ocrCount * btnSize
+        let pluginsWidth = pluginCount > 0 ? pluginCount * btnSize + (pluginCount - 1) * spacing : 0
+        let pluginDividerW: CGFloat = pluginCount > 0 ? dividerW : 0
         let actionsWidth = actionCount * btnSize + (actionCount - 1) * spacing
-        let totalWidth = padding + toolsWidth + dividerW + ocrWidth + dividerW + actionsWidth + padding
+        let totalWidth = padding + toolsWidth + dividerW + ocrWidth + pluginDividerW + pluginsWidth + dividerW + actionsWidth + padding
         let h: CGFloat = 30
 
         let x = selectionRect.origin.x + selectionRect.width - totalWidth
@@ -139,7 +145,28 @@ extension OverlayView {
         ocrBtn.onPress = { [weak self] in self?.enterOCRMode() }
         panel.addSubview(ocrBtn); bx += btnSize
 
-        // Divider 2
+        // Plugin buttons (dynamic)
+        if !plugins.isEmpty {
+            bx += (dividerW) / 2
+            let pluginDivider = NSView(frame: NSRect(x: bx - 0.5, y: 6, width: 1, height: h - 12))
+            pluginDivider.wantsLayer = true; pluginDivider.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+            panel.addSubview(pluginDivider)
+            bx += (dividerW) / 2
+
+            for plugin in plugins {
+                let pluginBtn = HoverIconButton(
+                    frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize),
+                    symbolName: plugin.manifest.icon,
+                    tooltip: plugin.manifest.name
+                )
+                pluginBtn.onPress = { [weak self] in self?.enterPluginMode(plugin) }
+                panel.addSubview(pluginBtn)
+                bx += btnSize + spacing
+            }
+            bx -= spacing  // remove trailing spacing from last plugin button
+        }
+
+        // Divider before actions
         bx += (dividerW) / 2
         let divider2 = NSView(frame: NSRect(x: bx - 0.5, y: 6, width: 1, height: h - 12))
         divider2.wantsLayer = true; divider2.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor

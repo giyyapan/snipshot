@@ -85,6 +85,9 @@ swiftc \
     "$PROJECT_DIR/Snipshot/SettingsWindow.swift" \
     "$PROJECT_DIR/Snipshot/OnboardingWindow.swift" \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
+    "$PROJECT_DIR/Snipshot/PluginManager.swift" \
+    "$PROJECT_DIR/Snipshot/PluginMode.swift" \
+    "$PROJECT_DIR/Snipshot/PluginResultWindow.swift" \
     -o "$MACOS/Snipshot"
 
 # Copy resources
