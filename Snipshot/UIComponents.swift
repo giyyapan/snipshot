@@ -40,7 +40,13 @@ class HoverIconButton: NSView {
     var onPress: (() -> Void)?
     var isActive: Bool = false {
         didSet {
-            iconView.contentTintColor = isActive ? activeColor : normalColor
+            updateTintColor()
+            needsDisplay = true
+        }
+    }
+    var isDisabled: Bool = false {
+        didSet {
+            updateTintColor()
             needsDisplay = true
         }
     }
@@ -48,8 +54,21 @@ class HoverIconButton: NSView {
     private var isHovered = false
     private var isPressed = false
     private let normalColor: NSColor = NSColor(white: 0.3, alpha: 1.0)
+    private let disabledColor: NSColor = NSColor(white: 0.3, alpha: 0.25)
     private let hoverColor: NSColor = NSColor.systemBlue
     private let activeColor: NSColor = NSColor.systemBlue
+
+    private func updateTintColor() {
+        if isDisabled {
+            iconView.contentTintColor = disabledColor
+        } else if isActive {
+            iconView.contentTintColor = activeColor
+        } else if isHovered {
+            iconView.contentTintColor = hoverColor
+        } else {
+            iconView.contentTintColor = normalColor
+        }
+    }
     private var tooltipText: String
     private var tooltipWindow: TooltipWindow?
 
@@ -89,7 +108,9 @@ class HoverIconButton: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if isActive {
+        if isDisabled {
+            // No background for disabled buttons
+        } else if isActive {
             NSColor.systemBlue.withAlphaComponent(0.2).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
         } else if isPressed {
@@ -123,6 +144,7 @@ class HoverIconButton: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        guard !isDisabled else { return }
         isHovered = true
         if !isActive { iconView.contentTintColor = hoverColor }
         NSCursor.arrow.set()
@@ -133,18 +155,20 @@ class HoverIconButton: NSView {
     override func mouseExited(with event: NSEvent) {
         isHovered = false
         isPressed = false
-        if !isActive { iconView.contentTintColor = normalColor }
+        if !isDisabled && !isActive { iconView.contentTintColor = normalColor }
         needsDisplay = true
         hideTooltip()
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard !isDisabled else { return }
         isPressed = true
         needsDisplay = true
         hideTooltip()
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard !isDisabled else { return }
         isPressed = false
         needsDisplay = true
         let loc = convert(event.locationInWindow, from: nil)

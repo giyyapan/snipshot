@@ -2,6 +2,7 @@ import Cocoa
 
 // MARK: - Annotation Tool Type
 enum AnnotationTool: String, CaseIterable {
+    case select
     case arrow
     case rectangle
     case text
@@ -10,6 +11,7 @@ enum AnnotationTool: String, CaseIterable {
 
     var symbolName: String {
         switch self {
+        case .select:    return "cursorarrow"
         case .arrow:     return "arrow.up.right"
         case .rectangle: return "rectangle"
         case .text:      return "textformat"
@@ -20,12 +22,18 @@ enum AnnotationTool: String, CaseIterable {
 
     var displayName: String {
         switch self {
+        case .select:    return "Select  S"
         case .arrow:     return "Arrow  A"
         case .rectangle: return "Rectangle  R"
         case .text:      return "Text  T"
         case .marker:    return "Marker  C"
         case .mosaic:    return "Mosaic  M"
         }
+    }
+
+    /// Whether this tool is a drawing tool (not select)
+    var isDrawingTool: Bool {
+        return self != .select
     }
 }
 
@@ -66,6 +74,8 @@ class AnnotationElement {
     // Bounding rect in selection-local coordinates
     var boundingRect: NSRect {
         switch tool {
+        case .select:
+            return .zero
         case .arrow:
             let padding = max(strokeWidth * 2, 10)
             let minX = min(startPoint.x, endPoint.x) - padding
@@ -103,6 +113,8 @@ class AnnotationElement {
 
     func hitTest(point: NSPoint) -> Bool {
         switch tool {
+        case .select:
+            return false
         case .arrow:
             return distanceToLine(point: point, from: startPoint, to: endPoint) < max(strokeWidth * 2, 8)
         case .rectangle:
@@ -127,6 +139,8 @@ class AnnotationElement {
         let hs: CGFloat = 8  // handle hit radius
 
         switch tool {
+        case .select:
+            return nil
         case .arrow:
             // Arrow has start and end point handles
             if distance(point, startPoint) < hs { return .startPoint }
@@ -256,6 +270,7 @@ class AnnotationState {
 
     var elements: [AnnotationElement] = []
     var selectedElementId: UUID? = nil
+    var selectedElementIds: Set<UUID> = []  // for multi-select
     var nextMarkerNumber: Int = 1
 
     init() {
@@ -276,16 +291,86 @@ class AnnotationState {
     }
 
     var undoStack: [[AnnotationElement]] = []
+    var redoStack: [[AnnotationElement]] = []
+
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    /// Tracks the type of the last debounced property change so only same-type changes merge.
+    enum PropertyChangeKind: Equatable {
+        case color, strokeWidth, text
+    }
+
+    private var propertyUndoTimer: Timer?
+    private var lastPropertyChangeKind: PropertyChangeKind?
 
     func pushUndo() {
+        // Cancel any pending debounced snapshot since we're doing a full push
+        propertyUndoTimer?.invalidate()
+        propertyUndoTimer = nil
+        lastPropertyChangeKind = nil
+
         undoStack.append(elements.map { $0.copy() })
         if undoStack.count > 50 { undoStack.removeFirst() }
+        redoStack.removeAll()  // new action clears redo history
+    }
+
+    /// Push undo for property changes with 1s debounce.
+    /// Only merges consecutive changes of the **same kind** within 1s.
+    /// A different kind immediately starts a new undo entry.
+    func pushUndoForPropertyChange(kind: PropertyChangeKind) {
+        if lastPropertyChangeKind == kind, propertyUndoTimer != nil {
+            // Same kind within debounce window: coalesce (no new snapshot)
+        } else {
+            // Different kind or no active debounce: save snapshot now
+            undoStack.append(elements.map { $0.copy() })
+            if undoStack.count > 50 { undoStack.removeFirst() }
+            redoStack.removeAll()
+            lastPropertyChangeKind = kind
+        }
+        // Reset the debounce timer
+        propertyUndoTimer?.invalidate()
+        propertyUndoTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
+            self?.lastPropertyChangeKind = nil
+            self?.propertyUndoTimer = nil
+        }
+    }
+
+    /// Pop the last undo entry if the current state matches it (i.e., no actual change happened).
+    func popUndoIfUnchanged() {
+        guard let lastSnapshot = undoStack.last else { return }
+        // Quick check: same count?
+        guard lastSnapshot.count == elements.count else { return }
+        // Deep check: compare each element
+        var same = true
+        for (a, b) in zip(lastSnapshot, elements) {
+            if a.id != b.id || a.startPoint != b.startPoint || a.endPoint != b.endPoint ||
+               a.strokeWidth != b.strokeWidth || !a.color.isEqual(to: b.color) || a.text != b.text {
+                same = false
+                break
+            }
+        }
+        if same {
+            undoStack.removeLast()
+        }
     }
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
+        redoStack.append(elements.map { $0.copy() })
         elements = previous
         selectedElementId = nil
+        selectedElementIds.removeAll()
+        let maxMarker = elements.filter { $0.tool == .marker }.map { $0.markerNumber }.max() ?? 0
+        nextMarkerNumber = maxMarker + 1
+    }
+
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(elements.map { $0.copy() })
+        elements = next
+        selectedElementId = nil
+        selectedElementIds.removeAll()
         let maxMarker = elements.filter { $0.tool == .marker }.map { $0.markerNumber }.max() ?? 0
         nextMarkerNumber = maxMarker + 1
     }
@@ -300,7 +385,10 @@ class AnnotationState {
     }
 
     func adjustStrokeWidth(delta: CGFloat) {
-        guard let tool = currentTool ?? selectedElement?.tool else { return }
+        guard let tool = selectedElement?.tool ?? currentTool, tool != .select else { return }
+        if selectedElement != nil {
+            pushUndoForPropertyChange(kind: .strokeWidth)
+        }
         let current = strokeWidths[tool] ?? 3
         let newVal = max(1, min(20, current + delta))
         strokeWidths[tool] = newVal
@@ -323,10 +411,50 @@ class AnnotationState {
     }
 
     func deleteSelected() {
+        if !selectedElementIds.isEmpty {
+            pushUndo()
+            elements.removeAll { selectedElementIds.contains($0.id) }
+            selectedElementIds.removeAll()
+            selectedElementId = nil
+            return
+        }
         guard let id = selectedElementId else { return }
         pushUndo()
         elements.removeAll { $0.id == id }
         selectedElementId = nil
+    }
+
+    func duplicateSelected() {
+        guard let sel = selectedElement else { return }
+        pushUndo()
+        let dup = sel.copy()
+        dup.id = UUID()  // new identity
+        // Offset slightly so it's visible
+        dup.startPoint.x += 15
+        dup.startPoint.y -= 15
+        dup.endPoint.x += 15
+        dup.endPoint.y -= 15
+        if dup.tool == .marker {
+            dup.markerNumber = nextMarkerNumber
+            nextMarkerNumber += 1
+        }
+        elements.append(dup)
+        selectedElementId = dup.id
+        selectedElementIds.removeAll()
+    }
+
+    func clearSelection() {
+        selectedElementId = nil
+        selectedElementIds.removeAll()
+    }
+
+    var hasMultiSelection: Bool {
+        return selectedElementIds.count > 1
+    }
+
+    func isElementSelected(_ element: AnnotationElement) -> Bool {
+        if selectedElementIds.contains(element.id) { return true }
+        return element.id == selectedElementId
     }
 
     static let availableColors: [NSColor] = [
@@ -343,6 +471,8 @@ class AnnotationRenderer {
         let oy = selectionOrigin.y
 
         switch element.tool {
+        case .select:
+            break  // select is not a drawable element
         case .arrow:
             drawArrow(element: element, ctx: context.cgContext, ox: ox, oy: oy)
         case .rectangle:
@@ -559,8 +689,8 @@ class AnnotationRenderer {
                 ring.stroke()
             }
 
-        case .text, .marker:
-            // No resize handles for text and marker
+        case .text, .marker, .select:
+            // No resize handles for text, marker, and select
             break
         }
     }
@@ -574,7 +704,12 @@ class AnnotationRenderer {
         baseImage.draw(in: NSRect(origin: .zero, size: size))
 
         if let context = NSGraphicsContext.current {
-            for element in annotations {
+            // Draw mosaic elements first (bottom layer) so they only pixelate the original image
+            for element in annotations where element.tool == .mosaic {
+                draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
+            }
+            // Draw all other annotations on top
+            for element in annotations where element.tool != .mosaic {
                 draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
             }
         }

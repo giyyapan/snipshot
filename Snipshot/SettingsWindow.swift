@@ -58,7 +58,7 @@ class SettingsWindow: NSWindow {
 
     // AI section fields
     private var aiStatusLabel: NSTextField!
-    private var aiApiKeyField: NSSecureTextField!
+    private var aiApiKeyField: RevealableSecureTextField!
     private var aiEndpointField: NSTextField!
     private var aiModelField: NSTextField!
     private var aiTestButton: NSButton!
@@ -86,8 +86,8 @@ class SettingsWindow: NSWindow {
         // Migrate old keys
         AISettings.migrateIfNeeded()
 
-        let width: CGFloat = 480
-        let height: CGFloat = 420
+        let width: CGFloat = 540
+        let height: CGFloat = 560
         let screenFrame = NSScreen.main?.frame ?? .zero
         let rect = NSRect(
             x: (screenFrame.width - width) / 2,
@@ -241,6 +241,20 @@ class SettingsWindow: NSWindow {
         trackpadScrollDesc.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(trackpadScrollDesc)
 
+        // Auto-switch to select after annotation
+        let autoSwitchCheckbox = NSButton(checkboxWithTitle: "Switch to Select tool after adding annotation",
+                                           target: self, action: #selector(toggleAutoSwitchToSelect(_:)))
+        autoSwitchCheckbox.state = UserDefaults.standard.bool(forKey: "autoSwitchToSelectAfterAnnotation") ? .on : .off
+        autoSwitchCheckbox.controlSize = .regular
+        autoSwitchCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(autoSwitchCheckbox)
+
+        let autoSwitchDesc = NSTextField(labelWithString: "Automatically return to Select tool after drawing each annotation")
+        autoSwitchDesc.font = .systemFont(ofSize: 11, weight: .regular)
+        autoSwitchDesc.textColor = .secondaryLabelColor
+        autoSwitchDesc.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(autoSwitchDesc)
+
         // Separator 2 (before debug)
         let separator2 = NSBox()
         separator2.boxType = .separator
@@ -324,8 +338,15 @@ class SettingsWindow: NSWindow {
             trackpadScrollDesc.topAnchor.constraint(equalTo: trackpadScrollCheckbox.bottomAnchor, constant: descGap),
             trackpadScrollDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 18),
 
+            // Auto-switch to select
+            autoSwitchCheckbox.topAnchor.constraint(equalTo: trackpadScrollDesc.bottomAnchor, constant: itemGap + 4),
+            autoSwitchCheckbox.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            autoSwitchDesc.topAnchor.constraint(equalTo: autoSwitchCheckbox.bottomAnchor, constant: descGap),
+            autoSwitchDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 18),
+
             // Separator 2
-            separator2.topAnchor.constraint(equalTo: trackpadScrollDesc.bottomAnchor, constant: sectionGap),
+            separator2.topAnchor.constraint(equalTo: autoSwitchDesc.bottomAnchor, constant: sectionGap),
             separator2.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
             separator2.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
 
@@ -416,7 +437,7 @@ class SettingsWindow: NSWindow {
         apiKeyLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(apiKeyLabel)
 
-        aiApiKeyField = NSSecureTextField()
+        aiApiKeyField = RevealableSecureTextField()
         aiApiKeyField.placeholderString = "Paste your API key here"
         aiApiKeyField.font = .systemFont(ofSize: 12)
         aiApiKeyField.translatesAutoresizingMaskIntoConstraints = false
@@ -469,14 +490,14 @@ class SettingsWindow: NSWindow {
         container.addSubview(aiTestStatusLabel)
 
         // Register for text field editing notifications (auto-save)
-        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
-                                               name: NSControl.textDidEndEditingNotification, object: aiApiKeyField)
+        // For aiApiKeyField (RevealableSecureTextField), use its callback
+        aiApiKeyField.onTextChange = { [weak self] in
+            self?.saveAIFields()
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
                                                name: NSControl.textDidEndEditingNotification, object: aiEndpointField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
                                                name: NSControl.textDidEndEditingNotification, object: aiModelField)
-        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
-                                               name: NSControl.textDidChangeNotification, object: aiApiKeyField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
                                                name: NSControl.textDidChangeNotification, object: aiEndpointField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
@@ -913,6 +934,12 @@ class SettingsWindow: NSWindow {
         logMessage("Trackpad scroll as zoom = \(enabled)")
     }
 
+    @objc private func toggleAutoSwitchToSelect(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        UserDefaults.standard.set(enabled, forKey: "autoSwitchToSelectAfterAnnotation")
+        logMessage("Auto-switch to select after annotation = \(enabled)")
+    }
+
     @objc private func toggleAlwaysOnboarding(_ sender: NSButton) {
         let enabled = sender.state == .on
         UserDefaults.standard.set(enabled, forKey: "debugAlwaysShowOnboarding")
@@ -1095,6 +1122,123 @@ class HotkeyRecorderField: NSView {
     }
 }
 
+
+// MARK: - Revealable Secure Text Field
+/// A text field that shows content as plain text when focused and masks it when not.
+/// Internally swaps between NSTextField (plain) and NSSecureTextField (masked).
+class RevealableSecureTextField: NSView {
+    private var secureField: NSSecureTextField!
+    private var plainField: NSTextField!
+    private var isRevealed = false
+
+    /// Called whenever the text content changes (from either field) or editing ends.
+    var onTextChange: (() -> Void)?
+
+    var stringValue: String {
+        get {
+            isRevealed ? plainField.stringValue : secureField.stringValue
+        }
+        set {
+            secureField.stringValue = newValue
+            plainField.stringValue = newValue
+        }
+    }
+
+    var placeholderString: String? {
+        get { secureField.placeholderString }
+        set {
+            secureField.placeholderString = newValue
+            plainField.placeholderString = newValue
+        }
+    }
+
+    var font: NSFont? {
+        get { secureField.font }
+        set {
+            secureField.font = newValue
+            plainField.font = newValue
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
+    private func setup() {
+        secureField = NSSecureTextField()
+        secureField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(secureField)
+
+        plainField = NSTextField()
+        plainField.translatesAutoresizingMaskIntoConstraints = false
+        plainField.isHidden = true
+        addSubview(plainField)
+
+        NSLayoutConstraint.activate([
+            secureField.topAnchor.constraint(equalTo: topAnchor),
+            secureField.bottomAnchor.constraint(equalTo: bottomAnchor),
+            secureField.leadingAnchor.constraint(equalTo: leadingAnchor),
+            secureField.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            plainField.topAnchor.constraint(equalTo: topAnchor),
+            plainField.bottomAnchor.constraint(equalTo: bottomAnchor),
+            plainField.leadingAnchor.constraint(equalTo: leadingAnchor),
+            plainField.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+
+        // Focus / blur notifications to swap fields
+        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidBeginEditing(_:)),
+                                               name: NSControl.textDidBeginEditingNotification, object: secureField)
+        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidBeginEditing(_:)),
+                                               name: NSControl.textDidBeginEditingNotification, object: plainField)
+        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidEndEditing(_:)),
+                                               name: NSControl.textDidEndEditingNotification, object: secureField)
+        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidEndEditing(_:)),
+                                               name: NSControl.textDidEndEditingNotification, object: plainField)
+
+        // Text change notifications to forward to owner
+        NotificationCenter.default.addObserver(self, selector: #selector(innerTextDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: secureField)
+        NotificationCenter.default.addObserver(self, selector: #selector(innerTextDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: plainField)
+    }
+
+    @objc private func innerTextDidChange(_ notification: Notification) {
+        onTextChange?()
+    }
+
+    @objc private func fieldDidBeginEditing(_ notification: Notification) {
+        guard !isRevealed else { return }
+        isRevealed = true
+        plainField.stringValue = secureField.stringValue
+        secureField.isHidden = true
+        plainField.isHidden = false
+        window?.makeFirstResponder(plainField)
+    }
+
+    @objc private func fieldDidEndEditing(_ notification: Notification) {
+        guard isRevealed else { return }
+        isRevealed = false
+        secureField.stringValue = plainField.stringValue
+        plainField.isHidden = true
+        secureField.isHidden = false
+        onTextChange?()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+}
 
 // MARK: - Flipped View (for scroll view document view)
 /// An NSView subclass that flips the coordinate system so Auto Layout constraints

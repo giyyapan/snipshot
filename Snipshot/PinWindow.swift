@@ -6,6 +6,10 @@ class PinWindow: NSWindow {
     var currentScale: CGFloat = 1.0
     let baseSize: NSSize
 
+    /// Stable center point in screen coordinates, updated only on drag or explicit reposition.
+    /// Zoom always preserves this center to avoid floating-point drift.
+    private var stableCenter: NSPoint = .zero
+
     private var imageView: NSImageView!
     private var pinView: PinContentView!
 
@@ -43,6 +47,12 @@ class PinWindow: NSWindow {
         self.contentView = pv
         self.imageView = pv.imageView
         self.pinView = pv
+
+        // Initialize stable center from the window frame
+        self.stableCenter = NSPoint(
+            x: windowRect.origin.x + baseSize.width / 2,
+            y: windowRect.origin.y + baseSize.height / 2
+        )
     }
 
     override var canBecomeKey: Bool { true }
@@ -63,7 +73,7 @@ class PinWindow: NSWindow {
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        if event.keyCode == 53 { // Escape - unpin
+        if event.keyCode == 53 || event.keyCode == 51 { // Escape or Backspace - unpin
             close()
         } else if event.keyCode == 8 && flags.contains(.command) { // Cmd+C - copy image
             copyImageToClipboard()
@@ -111,42 +121,66 @@ class PinWindow: NSWindow {
         let effectiveDelta = isPrecise ? -delta : delta
         let factor: CGFloat = isPrecise ? 0.005 : 0.03
         let zoomFactor: CGFloat = 1.0 + (effectiveDelta * factor)
-        applyZoom(to: currentScale * zoomFactor)
+        // For trackpad scroll, anchor at center for stability; for mouse wheel, anchor at cursor
+        applyZoom(to: currentScale * zoomFactor, anchorCenter: isPrecise)
     }
 
     // MARK: - Trackpad pinch → zoom
     override func magnify(with event: NSEvent) {
         let zoomFactor: CGFloat = 1.0 + event.magnification
-        applyZoom(to: currentScale * zoomFactor)
+        // Pinch gesture: anchor at center for stability
+        applyZoom(to: currentScale * zoomFactor, anchorCenter: true)
+    }
+
+    /// Update stable center from the current window frame (call after drag).
+    func updateStableCenter() {
+        stableCenter = NSPoint(
+            x: frame.origin.x + frame.width / 2,
+            y: frame.origin.y + frame.height / 2
+        )
     }
 
     // MARK: - Zoom
-    func applyZoom(to targetScale: CGFloat) {
+    /// Zoom to target scale.
+    /// `anchorCenter: true` uses the stable center (for trackpad/pinch).
+    /// `anchorCenter: false` uses the current mouse location (for discrete scroll wheel).
+    func applyZoom(to targetScale: CGFloat, anchorCenter: Bool = true) {
         let newScale = targetScale.clamped(to: minScale...maxScale)
         guard abs(newScale - currentScale) > 0.001 else { return }
-
-        let mouseScreen = NSEvent.mouseLocation
 
         let newWidth = baseSize.width * newScale
         let newHeight = baseSize.height * newScale
 
-        let mouseInWindow = NSPoint(
-            x: mouseScreen.x - frame.origin.x,
-            y: mouseScreen.y - frame.origin.y
-        )
-        let proportionX = mouseInWindow.x / frame.width
-        let proportionY = mouseInWindow.y / frame.height
+        let newX: CGFloat
+        let newY: CGFloat
 
-        let newX = mouseScreen.x - proportionX * newWidth
-        let newY = mouseScreen.y - proportionY * newHeight
+        if anchorCenter {
+            // Anchor at stable center: deterministic, no drift
+            newX = stableCenter.x - newWidth / 2
+            newY = stableCenter.y - newHeight / 2
+        } else {
+            // Anchor at mouse location
+            let mouseScreen = NSEvent.mouseLocation
+            let anchorInWindow = NSPoint(
+                x: mouseScreen.x - frame.origin.x,
+                y: mouseScreen.y - frame.origin.y
+            )
+            let proportionX = frame.width > 0 ? anchorInWindow.x / frame.width : 0.5
+            let proportionY = frame.height > 0 ? anchorInWindow.y / frame.height : 0.5
+            newX = mouseScreen.x - proportionX * newWidth
+            newY = mouseScreen.y - proportionY * newHeight
+            // Update stable center to the new window center
+            stableCenter = NSPoint(x: newX + newWidth / 2, y: newY + newHeight / 2)
+        }
 
         currentScale = newScale
 
         let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)
         setFrame(newFrame, display: true, animate: false)
 
-        contentView?.frame = NSRect(origin: .zero, size: NSSize(width: newWidth, height: newHeight))
-        imageView.frame = NSRect(origin: .zero, size: NSSize(width: newWidth, height: newHeight))
+        let contentSize = NSSize(width: newWidth, height: newHeight)
+        contentView?.frame = NSRect(origin: .zero, size: contentSize)
+        imageView.frame = NSRect(origin: .zero, size: contentSize)
     }
 }
 
@@ -297,6 +331,10 @@ class PinContentView: NSView {
         }
         dragOrigin = nil
         windowOriginAtDragStart = nil
+        // Update stable center after drag so zoom anchors at the new position
+        if let window = parentWindow {
+            window.updateStableCenter()
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {

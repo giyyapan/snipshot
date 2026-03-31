@@ -115,6 +115,8 @@ class OverlayView: NSView {
     var currentAnnotationElement: AnnotationElement? = nil
     var toolButtons: [AnnotationTool: HoverIconButton] = [:]
     var colorDots: [NSColor: ColorDot] = [:]
+    var undoButton: HoverIconButton?
+    var redoButton: HoverIconButton?
 
     // Annotation dragging
     var annoDragStart: NSPoint = .zero
@@ -124,6 +126,13 @@ class OverlayView: NSView {
     // Annotation resizing
     var annoResizeElement: AnnotationElement? = nil
     var annoResizeHandle: AnnoResizeHandle? = nil
+
+    // Marquee selection (select tool)
+    var marqueeStart: NSPoint? = nil
+    var marqueeRect: NSRect? = nil
+
+    // Auto-switch back to select tool after drawing
+    var autoSwitchToSelect: Bool = UserDefaults.standard.bool(forKey: "autoSwitchToSelectAfterAnnotation")
 
     let handleSize: CGFloat = 8
     let handleHitSize: CGFloat = 14
@@ -343,18 +352,41 @@ class OverlayView: NSView {
             commitTextEditing()
         }
         annoState.currentTool = tool
-        annoState.selectedElementId = nil
+        // Switching tools always clears selection
+        annoState.clearSelection()
+        marqueeStart = nil
+        marqueeRect = nil
+        // Only transition to .annotating if annotations exist;
+        // otherwise preserve .selected so the selection frame stays interactive
+        if !annoState.elements.isEmpty {
+            mode = .annotating
+        }
+        removeAllPanels()
+        showAllPanels()
+        needsDisplay = true
+    }
+
+    /// Switch to select tool and select the given element (shows element properties)
+    func selectElement(_ element: AnnotationElement) {
+        annoState.currentTool = .select
+        annoState.selectedElementId = element.id
+        annoState.selectedElementIds.removeAll()
+        annoState.currentColor = element.color
+        if element.tool != .select {
+            annoState.strokeWidths[element.tool] = element.strokeWidth
+        }
+        // Element exists, so we're in annotation mode
         mode = .annotating
         removeAllPanels()
         showAllPanels()
         needsDisplay = true
     }
 
-    func switchToElementTool(_ element: AnnotationElement) {
-        annoState.currentTool = element.tool
-        annoState.currentColor = element.color
-        annoState.strokeWidths[element.tool] = element.strokeWidth
-        mode = .annotating
+    /// Enter select tool mode (used after selection completion).
+    /// Does NOT change mode — caller is responsible for setting the correct mode.
+    func enterSelectMode() {
+        annoState.currentTool = .select
+        annoState.clearSelection()
         removeAllPanels()
         showAllPanels()
         needsDisplay = true
@@ -363,6 +395,7 @@ class OverlayView: NSView {
     func selectColor(_ color: NSColor) {
         annoState.currentColor = color
         if let sel = annoState.selectedElement {
+            annoState.pushUndoForPropertyChange(kind: .color)
             sel.color = color
         }
         updateColorDots()
@@ -902,12 +935,9 @@ class OverlayView: NSView {
                 context.cgContext.saveGState()
                 context.cgContext.clip(to: selectionRect)
 
-                for element in annoState.elements {
-                    // Skip drawing text element while it's being edited (textEditView is visible)
-                    if element.tool == .text && element.id == annoState.selectedElementId && textEditView != nil {
-                        continue
-                    }
-                    let isSelected = element.id == annoState.selectedElementId
+                // Draw mosaic elements first (bottom layer) so they only pixelate the original image
+                for element in annoState.elements where element.tool == .mosaic {
+                    let isSelected = annoState.isElementSelected(element)
                     AnnotationRenderer.draw(
                         element: element,
                         in: context,
@@ -917,8 +947,7 @@ class OverlayView: NSView {
                         selectionRect: selectionRect
                     )
                 }
-
-                if let current = currentAnnotationElement {
+                if let current = currentAnnotationElement, current.tool == .mosaic {
                     AnnotationRenderer.draw(
                         element: current,
                         in: context,
@@ -927,6 +956,50 @@ class OverlayView: NSView {
                         screenshot: screenshot,
                         selectionRect: selectionRect
                     )
+                }
+
+                // Draw all other annotations on top
+                for element in annoState.elements where element.tool != .mosaic {
+                    // Skip drawing text element while it's being edited (textEditView is visible)
+                    if element.tool == .text && element.id == annoState.selectedElementId && textEditView != nil {
+                        continue
+                    }
+                    let isSelected = annoState.isElementSelected(element)
+                    AnnotationRenderer.draw(
+                        element: element,
+                        in: context,
+                        selectionOrigin: selectionRect.origin,
+                        isSelected: isSelected,
+                        screenshot: screenshot,
+                        selectionRect: selectionRect
+                    )
+                }
+                if let current = currentAnnotationElement, current.tool != .mosaic {
+                    AnnotationRenderer.draw(
+                        element: current,
+                        in: context,
+                        selectionOrigin: selectionRect.origin,
+                        isSelected: false,
+                        screenshot: screenshot,
+                        selectionRect: selectionRect
+                    )
+                }
+
+                // Draw marquee selection rect
+                if let mRect = marqueeRect {
+                    let screenMRect = NSRect(
+                        x: mRect.origin.x + selectionRect.origin.x,
+                        y: mRect.origin.y + selectionRect.origin.y,
+                        width: mRect.width,
+                        height: mRect.height
+                    )
+                    NSColor.systemBlue.withAlphaComponent(0.15).setFill()
+                    NSBezierPath(rect: screenMRect).fill()
+                    NSColor.systemBlue.withAlphaComponent(0.6).setStroke()
+                    let mPath = NSBezierPath(rect: screenMRect)
+                    mPath.lineWidth = 1.0
+                    mPath.setLineDash([4, 3], count: 2, phase: 0)
+                    mPath.stroke()
                 }
 
                 context.cgContext.restoreGState()
@@ -1043,6 +1116,7 @@ class OverlayView: NSView {
             guard selectionRect.contains(point) || hitTestAnnoResizeHandle(at: point) != nil else { return }
             let localPt = screenToLocal(point)
 
+            // Resize handles on selected element (works for both select and drawing tools)
             if let (element, handle) = hitTestAnnoResizeHandle(at: point) {
                 annoState.pushUndo()
                 annoResizeElement = element
@@ -1051,17 +1125,22 @@ class OverlayView: NSView {
                 return
             }
 
+            let isSelectTool = annoState.currentTool == .select
+
+            // Hit an existing element?
             if let element = hitTestAnnotation(at: point) {
                 // Double-click on text element: re-enter editing mode
                 if event.clickCount == 2 && element.tool == .text {
                     annoState.selectedElementId = element.id
+                    annoState.selectedElementIds.removeAll()
                     mode = .editingText
                     showTextEditor(for: element)
                     needsDisplay = true
                     return
                 }
-                annoState.selectedElementId = element.id
-                switchToElementTool(element)
+                // Click on element: always switch to select tool and select it
+                selectElement(element)
+                annoState.pushUndo()  // snapshot before move
                 annoDragStart = localPt
                 annoDragElementStart = element.startPoint
                 annoDragElementEnd = element.endPoint
@@ -1069,9 +1148,20 @@ class OverlayView: NSView {
                 return
             }
 
-            annoState.selectedElementId = nil
+            // Clicked empty area
+            annoState.clearSelection()
+            refreshSecondaryPanel()
 
-            if let tool = annoState.currentTool {
+            if isSelectTool {
+                // Start marquee selection
+                marqueeStart = localPt
+                marqueeRect = nil
+                needsDisplay = true
+                return
+            }
+
+            // Drawing tools: create new element
+            if let tool = annoState.currentTool, tool.isDrawingTool {
                 annoState.pushUndo()
                 if tool == .text {
                     let element = AnnotationElement(tool: .text, color: annoState.currentColor, strokeWidth: annoState.strokeWidths[.text] ?? 4, startPoint: localPt, endPoint: localPt)
@@ -1087,6 +1177,9 @@ class OverlayView: NSView {
                     element.markerNumber = annoState.nextMarkerNumber
                     annoState.nextMarkerNumber += 1
                     annoState.elements.append(element)
+                    if autoSwitchToSelect {
+                        selectElement(element)
+                    }
                     needsDisplay = true
                     return
                 } else {
@@ -1098,6 +1191,8 @@ class OverlayView: NSView {
                     return
                 }
             }
+            refreshSecondaryPanel()
+            needsDisplay = true
 
         case .drawingAnnotation:
             break
@@ -1118,13 +1213,13 @@ class OverlayView: NSView {
                 // Double-click on text element: re-enter editing mode
                 if event.clickCount == 2 && element.tool == .text {
                     annoState.selectedElementId = element.id
+                    annoState.selectedElementIds.removeAll()
                     mode = .editingText
                     showTextEditor(for: element)
                     needsDisplay = true
                     return
                 }
-                annoState.selectedElementId = element.id
-                switchToElementTool(element)
+                selectElement(element)
                 let localPt = screenToLocal(point)
                 annoDragStart = localPt
                 annoDragElementStart = element.startPoint
@@ -1140,6 +1235,38 @@ class OverlayView: NSView {
             }
 
             if selectionRect.contains(point) {
+                // If a drawing tool is active, start drawing annotation instead of moving selection
+                if let tool = annoState.currentTool, tool.isDrawingTool {
+                    let localPt = screenToLocal(point)
+                    annoState.pushUndo()
+                    if tool == .text {
+                        let element = AnnotationElement(tool: .text, color: annoState.currentColor, strokeWidth: annoState.strokeWidths[.text] ?? 4, startPoint: localPt, endPoint: localPt)
+                        element.text = ""
+                        annoState.elements.append(element)
+                        annoState.selectedElementId = element.id
+                        mode = .editingText
+                        showTextEditor(for: element)
+                        needsDisplay = true
+                        return
+                    } else if tool == .marker {
+                        let element = AnnotationElement(tool: .marker, color: annoState.currentColor, strokeWidth: annoState.strokeWidths[.marker] ?? 12, startPoint: localPt, endPoint: localPt)
+                        element.markerNumber = annoState.nextMarkerNumber
+                        annoState.nextMarkerNumber += 1
+                        annoState.elements.append(element)
+                        if autoSwitchToSelect {
+                            selectElement(element)
+                        }
+                        needsDisplay = true
+                        return
+                    } else {
+                        annotationDrawStart = localPt
+                        let sw = annoState.strokeWidths[tool] ?? 3
+                        currentAnnotationElement = AnnotationElement(tool: tool, color: annoState.currentColor, strokeWidth: sw, startPoint: localPt, endPoint: localPt)
+                        mode = .drawingAnnotation
+                        needsDisplay = true
+                        return
+                    }
+                }
                 mode = .moving
                 moveOffset = NSPoint(x: point.x - selectionRect.origin.x, y: point.y - selectionRect.origin.y)
                 NSCursor.closedHand.set()
@@ -1197,6 +1324,20 @@ class OverlayView: NSView {
             currentAnnotationElement?.endPoint = localPt
             needsDisplay = true
 
+        case .annotating:
+            // Marquee drag for select tool
+            if annoState.currentTool == .select, let start = marqueeStart {
+                let localPt = screenToLocal(point)
+                let x = min(start.x, localPt.x)
+                let y = min(start.y, localPt.y)
+                let w = abs(localPt.x - start.x)
+                let h = abs(localPt.y - start.y)
+                if w > 3 || h > 3 {
+                    marqueeRect = NSRect(x: x, y: y, width: w, height: h)
+                    needsDisplay = true
+                }
+            }
+
         case .movingAnnotation:
             if let sel = annoState.selectedElement {
                 let localPt = screenToLocal(point)
@@ -1222,12 +1363,15 @@ class OverlayView: NSView {
         switch mode {
         case .drawing:
             if hasSelection {
-                mode = .selected; showAllPanels()
+                mode = .selected
+                // Auto-enter select tool mode after selection
+                enterSelectMode()
                 autoCopyIfEnabled()
             } else if let winFrame = windowFrameAt(point: drawStart) {
                 // Click without drag: snap selection to the window under cursor
                 selectionRect = winFrame
-                mode = .selected; showAllPanels()
+                mode = .selected
+                enterSelectMode()
                 autoCopyIfEnabled()
             } else {
                 mode = .idle; selectionRect = .zero
@@ -1249,20 +1393,53 @@ class OverlayView: NSView {
                 let dy = abs(element.endPoint.y - element.startPoint.y)
                 if dx > 3 || dy > 3 {
                     annoState.elements.append(element)
+                    if autoSwitchToSelect {
+                        currentAnnotationElement = nil
+                        selectElement(element)
+                        return
+                    }
                 }
             }
             currentAnnotationElement = nil
             mode = .annotating
             needsDisplay = true
 
+        case .annotating:
+            // Marquee selection finished
+            if annoState.currentTool == .select, let rect = marqueeRect, rect.width > 3 || rect.height > 3 {
+                // Find all elements whose bounding rect intersects the marquee
+                var selectedIds = Set<UUID>()
+                for element in annoState.elements {
+                    if element.boundingRect.intersects(rect) {
+                        selectedIds.insert(element.id)
+                    }
+                }
+                annoState.selectedElementIds = selectedIds
+                if selectedIds.count == 1, let onlyId = selectedIds.first,
+                   let element = annoState.elements.first(where: { $0.id == onlyId }) {
+                    // Single element selected via marquee: treat as single select
+                    selectElement(element)
+                } else {
+                    annoState.selectedElementId = nil
+                    refreshSecondaryPanel()
+                }
+            }
+            marqueeStart = nil
+            marqueeRect = nil
+            needsDisplay = true
+
         case .movingAnnotation:
-            mode = annoState.currentTool != nil ? .annotating : .selected
+            // Pop undo if element wasn't actually moved
+            annoState.popUndoIfUnchanged()
+            mode = .annotating
             needsDisplay = true
 
         case .resizingAnnotation:
+            // Pop undo if element wasn't actually resized
+            annoState.popUndoIfUnchanged()
             annoResizeElement = nil
             annoResizeHandle = nil
-            mode = annoState.currentTool != nil ? .annotating : .selected
+            mode = .annotating
             needsDisplay = true
 
         default: break
@@ -1293,7 +1470,13 @@ class OverlayView: NSView {
             }
             if selectionRect.contains(point) {
                 if hoveredHandle != nil { hoveredHandle = nil; needsDisplay = true }
-                NSCursor.openHand.set(); return
+                // Show crosshair if a drawing tool is active, openHand for select/move
+                if let tool = annoState.currentTool, tool.isDrawingTool {
+                    NSCursor.crosshair.set()
+                } else {
+                    NSCursor.openHand.set()
+                }
+                return
             }
             if hoveredHandle != nil { hoveredHandle = nil; needsDisplay = true }
             NSCursor.crosshair.set()
@@ -1306,7 +1489,12 @@ class OverlayView: NSView {
                 NSCursor.openHand.set(); return
             }
             if selectionRect.contains(point) {
-                NSCursor.crosshair.set()
+                let isSelectTool = annoState.currentTool == .select
+                if isSelectTool {
+                    NSCursor.arrow.set()
+                } else {
+                    NSCursor.crosshair.set()
+                }
             } else {
                 NSCursor.arrow.set()
             }
@@ -1415,7 +1603,27 @@ class OverlayView: NSView {
         }
 
         if event.keyCode == 53 { // Escape
-            // When auto-copy is enabled and we have a selection, copy before cancelling
+            // Layered ESC behavior:
+            // 1. If an element is selected -> deselect and switch to select tool
+            // 2. If a drawing tool is active -> switch to select tool
+            // 3. Otherwise -> exit/cancel
+            if (mode == .annotating || mode == .selected) &&
+               (annoState.selectedElementId != nil || !annoState.selectedElementIds.isEmpty) {
+                annoState.clearSelection()
+                annoState.currentTool = .select
+                mode = .annotating
+                removeAllPanels(); showAllPanels()
+                needsDisplay = true
+                return
+            }
+            if (mode == .annotating || mode == .selected),
+               let tool = annoState.currentTool, tool != .select {
+                annoState.currentTool = .select
+                mode = .annotating
+                removeAllPanels(); showAllPanels()
+                needsDisplay = true
+                return
+            }
             if autoCopyEnabled && hasSelection && !hasAutoCopied {
                 autoCopyIfEnabled()
             }
@@ -1429,11 +1637,15 @@ class OverlayView: NSView {
         } else if event.keyCode == 1 && flags.contains(.command) { // Cmd+S
             if mode == .selected || mode == .annotating { performAction(.save) }
         } else if event.keyCode == 51 { // Delete/Backspace
-            if annoState.selectedElementId != nil {
+            if annoState.selectedElementId != nil || !annoState.selectedElementIds.isEmpty {
                 annoState.deleteSelected()
                 removeAllPanels(); showAllPanels()
                 needsDisplay = true
             }
+        } else if event.keyCode == 6 && flags.contains(.command) && flags.contains(.shift) { // Cmd+Shift+Z redo
+            annoState.redo()
+            removeAllPanels(); showAllPanels()
+            needsDisplay = true
         } else if event.keyCode == 6 && flags.contains(.command) { // Cmd+Z undo
             annoState.undo()
             removeAllPanels(); showAllPanels()
@@ -1441,6 +1653,7 @@ class OverlayView: NSView {
         } else if (mode == .selected || mode == .annotating) && flags.isEmpty {
             // Tool shortcuts (only when no modifier keys are pressed)
             switch event.characters?.lowercased() {
+            case "s": selectTool(.select)
             case "a": selectTool(.arrow)
             case "r": selectTool(.rectangle)
             case "t": selectTool(.text)
@@ -1588,7 +1801,12 @@ class OverlayView: NSView {
 
     func commitTextEditing() {
         if let tv = textEditView, let sv = textEditScrollView, let sel = annoState.selectedElement, sel.tool == .text {
-            sel.text = tv.string
+            let oldText = sel.text
+            let newText = tv.string
+            if oldText != newText {
+                annoState.pushUndoForPropertyChange(kind: .text)
+            }
+            sel.text = newText
             if sel.text.isEmpty {
                 annoState.elements.removeAll { $0.id == sel.id }
                 annoState.selectedElementId = nil
