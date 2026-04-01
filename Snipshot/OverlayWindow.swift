@@ -472,14 +472,19 @@ class OverlayView: NSView {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
         let viewBounds = bounds
 
+        // Get the overlay window's own window number so we can skip exactly that window.
+        // Other Snipshot windows (e.g. Settings) at layer 0 should remain snappable.
+        let overlayWindowNumber = window?.windowNumber ?? -1
+
         guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return }
 
         // First pass: collect all valid window rects in Z-order (front to back)
         var allFrames: [NSRect] = []
         for info in windowList {
-            // Skip our own overlay window
-            if let ownerPID = info[kCGWindowOwnerPID as String] as? Int32,
-               ownerPID == ProcessInfo.processInfo.processIdentifier { continue }
+            // Skip our own overlay window (by window number, not PID, so other
+            // Snipshot windows like Settings remain snappable)
+            if let wid = info[kCGWindowNumber as String] as? Int,
+               wid == overlayWindowNumber { continue }
 
             guard let boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat],
                   let x = boundsDict["X"], let y = boundsDict["Y"],
@@ -510,8 +515,11 @@ class OverlayView: NSView {
             allFrames.append(clipped)
         }
 
-        // Second pass: only keep windows whose 4 corners are all visible
-        // (not occluded by any higher Z-order window)
+        // Second pass: keep windows that have at least one corner visible
+        // (not fully occluded by higher Z-order windows).
+        // Previous logic required ALL 4 corners visible, which incorrectly
+        // excluded fullscreen/maximized apps when any overlapping window
+        // covered even a single corner.
         var snappableFrames: [NSRect] = []
         for (i, frame) in allFrames.enumerated() {
             let corners = [
@@ -520,17 +528,21 @@ class OverlayView: NSView {
                 NSPoint(x: frame.minX + 1, y: frame.maxY - 1),
                 NSPoint(x: frame.maxX - 1, y: frame.maxY - 1),
             ]
-            var allCornersVisible = true
+            var anyCornersVisible = false
             for corner in corners {
+                var cornerVisible = true
                 for j in 0..<i {
                     if allFrames[j].contains(corner) {
-                        allCornersVisible = false
+                        cornerVisible = false
                         break
                     }
                 }
-                if !allCornersVisible { break }
+                if cornerVisible {
+                    anyCornersVisible = true
+                    break
+                }
             }
-            if allCornersVisible {
+            if anyCornersVisible {
                 snappableFrames.append(frame)
             }
         }
