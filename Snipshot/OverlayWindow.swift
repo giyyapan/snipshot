@@ -417,6 +417,11 @@ class OverlayView: NSView {
     // MARK: - Auto-Copy
     /// Automatically copy the current selection to clipboard if auto-copy is enabled.
     func autoCopyIfEnabled() {
+        // Auto-commit any uncommitted text editing before auto-copy
+        if case .editingText = mode {
+            commitTextEditing()
+            mode = .annotating
+        }
         guard autoCopyEnabled, hasSelection else { return }
         if let image = cropImage() {
             let pasteboard = NSPasteboard.general
@@ -431,6 +436,11 @@ class OverlayView: NSView {
     enum ActionType { case copy, save, pin, cancel }
 
     func performAction(_ type: ActionType) {
+        // Auto-commit any uncommitted text editing before exporting
+        if case .editingText = mode {
+            commitTextEditing()
+            mode = .annotating
+        }
         if type == .cancel {
             // When auto-copy is enabled and we have a selection, copy before cancelling
             if autoCopyEnabled && hasSelection && !hasAutoCopied {
@@ -1662,6 +1672,23 @@ class OverlayView: NSView {
             annoState.undo()
             removeAllPanels(); showAllPanels()
             needsDisplay = true
+        } else if (mode == .selected || mode == .annotating) && flags == .shift {
+            // Shift+O: OCR Copy All Text & Done
+            if event.characters?.lowercased() == "o" {
+                ocrCopyAllAndDone()
+                return
+            }
+            // Shift+Arrow: nudge selection by 10px
+            if mode == .selected {
+                let nudge: CGFloat = 10
+                switch event.keyCode {
+                case 123: selectionRect.origin.x -= nudge; refreshPanels()
+                case 124: selectionRect.origin.x += nudge; refreshPanels()
+                case 125: selectionRect.origin.y -= nudge; refreshPanels()
+                case 126: selectionRect.origin.y += nudge; refreshPanels()
+                default: break
+                }
+            }
         } else if (mode == .selected || mode == .annotating) && flags.isEmpty {
             // Tool shortcuts (only when no modifier keys are pressed)
             switch event.characters?.lowercased() {
@@ -1684,15 +1711,6 @@ class OverlayView: NSView {
                     default: break
                     }
                 }
-            }
-        } else if mode == .selected && flags.contains(.shift) {
-            let nudge: CGFloat = 10
-            switch event.keyCode {
-            case 123: selectionRect.origin.x -= nudge; refreshPanels()
-            case 124: selectionRect.origin.x += nudge; refreshPanels()
-            case 125: selectionRect.origin.y -= nudge; refreshPanels()
-            case 126: selectionRect.origin.y += nudge; refreshPanels()
-            default: break
             }
         }
     }

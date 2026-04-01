@@ -60,9 +60,12 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
         let contentH = ceil(imgH * scale)
         let windowHeight = contentH + titleBarH
 
-        // Position: try to place at the same location as the selection
+        // Position: align the image area's top edge with the selection's top edge.
+        // In NS coords (bottom-left origin): selection top = selectionRect.origin.y + selectionRect.height
+        // Image area occupies [windowY, windowY + contentH], title bar sits above.
+        // So: windowY + contentH = selectionTop => windowY = selectionTop - contentH
         var windowX = selectionRect.origin.x
-        var windowY = selectionRect.origin.y - titleBarH  // title bar above image
+        var windowY = selectionRect.origin.y + selectionRect.height - contentH
 
         // Adjust if it goes off-screen
         if windowX + windowWidth > screenFrame.maxX - 10 {

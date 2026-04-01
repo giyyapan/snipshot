@@ -49,6 +49,7 @@
 | Cmd+Z | Annotating | Undo |
 | A, R, T, C, M | Selected/Annotating (no modifier) | Arrow, Rectangle, Text, Marker, Mosaic tools |
 | O | Selected/Annotating (no modifier) | OCR Text Recognition |
+| Shift+O | Selected/Annotating | OCR Copy All Text & Done |
 | C | Idle (no modifier) | Copy color value under cursor & close |
 | Shift | Idle | Toggle color format (HEX/RGB/HSL) |
 | Arrow keys | Selected | Nudge selection (1px; +Shift = 10px) |

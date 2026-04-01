@@ -101,12 +101,13 @@ extension OverlayView {
         let tools = AnnotationTool.allCases
         let toolCount = CGFloat(tools.count)
         let undoRedoCount: CGFloat = 2
+        let ocrChevronW: CGFloat = 14
         let ocrCount: CGFloat = 2
         let actionCount: CGFloat = 4
 
         let toolsWidth = toolCount * btnSize + (toolCount - 1) * spacing
         let undoRedoWidth = undoRedoCount * btnSize + (undoRedoCount - 1) * spacing
-        let ocrWidth = ocrCount * btnSize + (ocrCount - 1) * spacing
+        let ocrWidth = ocrCount * btnSize + (ocrCount - 1) * spacing + ocrChevronW
         let actionsWidth = actionCount * btnSize + (actionCount - 1) * spacing
         let totalWidth = padding + toolsWidth + dividerW + undoRedoWidth + dividerW + ocrWidth + dividerW + actionsWidth + padding
         let h: CGFloat = 30
@@ -168,7 +169,15 @@ extension OverlayView {
         // OCR button
         let ocrBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "doc.text.viewfinder", tooltip: "OCR Text Recognition  O")
         ocrBtn.onPress = { [weak self] in self?.enterOCRMode() }
-        panel.addSubview(ocrBtn); bx += btnSize + spacing
+        panel.addSubview(ocrBtn); bx += btnSize
+
+        // OCR dropdown chevron
+        let chevronBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: ocrChevronW, height: btnSize), symbolName: "chevron.down", tooltip: "", pointSize: 7)
+        chevronBtn.onPress = { [weak self] in
+            guard let self = self else { return }
+            self.showOCRDropdownMenu(from: chevronBtn)
+        }
+        panel.addSubview(chevronBtn); bx += ocrChevronW + spacing
 
         // Translate button
         let translateBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "character.book.closed", tooltip: "Translate  Y")
@@ -444,6 +453,32 @@ extension OverlayView {
 
         addSubview(panel)
         secondaryPanelView = panel
+    }
+
+    // MARK: - OCR Dropdown Menu
+    func showOCRDropdownMenu(from view: NSView) {
+        let menu = NSMenu()
+
+        let copyAllItem = NSMenuItem(title: "Copy All Text & Done", action: #selector(ocrDropdownCopyAll), keyEquivalent: "")
+        copyAllItem.keyEquivalentModifierMask = []
+        // Show shortcut hint in the menu item
+        let attrTitle = NSMutableAttributedString(string: "Copy All Text & Done")
+        let shortcutStr = NSAttributedString(string: "  \u{21E7}O", attributes: [
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .font: NSFont.systemFont(ofSize: 12)
+        ])
+        attrTitle.append(shortcutStr)
+        copyAllItem.attributedTitle = attrTitle
+        copyAllItem.target = self
+        menu.addItem(copyAllItem)
+
+        // Position menu below the chevron button
+        let menuLocation = NSPoint(x: 0, y: view.bounds.height + 2)
+        menu.popUp(positioning: nil, at: menuLocation, in: view)
+    }
+
+    @objc func ocrDropdownCopyAll() {
+        ocrCopyAllAndDone()
     }
 
     /// Show panel for multi-selection: only delete button

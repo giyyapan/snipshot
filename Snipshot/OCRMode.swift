@@ -64,6 +64,48 @@ extension OverlayView {
         }
     }
 
+    /// Quick OCR: recognize all text in the selection, copy to clipboard, and close overlay.
+    func ocrCopyAllAndDone() {
+        guard hasSelection else { return }
+        guard ImageAnalyzer.isSupported else {
+            logMessage("ImageAnalyzer is not supported on this device.")
+            return
+        }
+
+        // Auto-commit any uncommitted text editing
+        if case .editingText = mode {
+            commitTextEditing()
+            mode = .annotating
+        }
+
+        guard let croppedImage = cropImage() else { return }
+
+        logMessage("OCR quick copy: starting recognition...")
+
+        // Run OCR and copy result, then dismiss
+        Task { @MainActor in
+            do {
+                let configuration = ImageAnalyzer.Configuration([.text])
+                let analysis = try await imageAnalyzer.analyze(croppedImage, orientation: .up, configuration: configuration)
+                let ocrText = analysis.transcript
+                logMessage("OCR quick copy: \(ocrText.count) chars recognized")
+
+                if ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    logMessage("OCR quick copy: no text found")
+                } else {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(ocrText, forType: .string)
+                    logMessage("OCR quick copy: text copied to clipboard")
+                }
+            } catch {
+                logMessage("OCR quick copy failed: \(error.localizedDescription)")
+            }
+            // Dismiss overlay regardless of result
+            onAction(.cancel)
+        }
+    }
+
     func exitOCRMode() {
         ocrOverlayView?.removeFromSuperview()
         ocrOverlayView = nil

@@ -390,6 +390,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pinWindow.makeKeyAndOrderFront(nil)
         pinWindows.append(pinWindow)
         pinWindows.removeAll { !$0.isVisible }
+        // Activate the app so the pin window becomes truly key and can receive Esc
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc func pinFromClipboard() {
