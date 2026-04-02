@@ -63,9 +63,13 @@ class SettingsWindow: NSWindow {
     private var aiModelField: NSTextField!
     private var aiTestButton: NSButton!
     private var aiTestStatusLabel: NSTextField!
+    private var aiSaveButton: NSButton!
+    private var aiSaveStatusLabel: NSTextField!
 
     // Translation section
     private var translateLanguagePopup: NSPopUpButton!
+    private var translateSaveButton: NSButton!
+    private var translateSaveStatusLabel: NSTextField!
 
     // Translation prompt (always visible)
     private var translatePromptView: NSScrollView!
@@ -74,6 +78,13 @@ class SettingsWindow: NSWindow {
     // OCR Refine prompt
     private var ocrRefinePromptView: NSScrollView!
     private var ocrRefinePromptTextView: NSTextView!
+    private var ocrSaveButton: NSButton!
+    private var ocrSaveStatusLabel: NSTextField!
+
+    // Dirty tracking — Save buttons are disabled until user makes a change
+    private var aiConfigDirty = false
+    private var translatePromptDirty = false
+    private var ocrPromptDirty = false
 
     init() {
         // Load saved hotkey or use default
@@ -468,13 +479,13 @@ class SettingsWindow: NSWindow {
         container.addSubview(modelLabel)
 
         aiModelField = NSTextField()
-        aiModelField.placeholderString = "e.g. gemini-3-flash-preview"
+        aiModelField.placeholderString = "e.g. gemini-3.1-flash-lite-preview"
         aiModelField.font = .systemFont(ofSize: 12)
         aiModelField.translatesAutoresizingMaskIntoConstraints = false
         aiModelField.stringValue = AISettings.model
         container.addSubview(aiModelField)
 
-        // Test button + status
+        // Button row: Test Connection (left) + Save (right, disabled by default)
         aiTestButton = NSButton(title: "Test Connection", target: self, action: #selector(testAIConnection))
         aiTestButton.bezelStyle = .rounded
         aiTestButton.controlSize = .small
@@ -489,15 +500,24 @@ class SettingsWindow: NSWindow {
         aiTestStatusLabel.lineBreakMode = .byTruncatingTail
         container.addSubview(aiTestStatusLabel)
 
-        // Register for text field editing notifications (auto-save)
-        // For aiApiKeyField (RevealableSecureTextField), use its callback
+        aiSaveButton = NSButton(title: "Save", target: self, action: #selector(saveAIConfigTapped))
+        aiSaveButton.bezelStyle = .rounded
+        aiSaveButton.controlSize = .small
+        aiSaveButton.font = .systemFont(ofSize: 11)
+        aiSaveButton.translatesAutoresizingMaskIntoConstraints = false
+        aiSaveButton.isEnabled = false
+        container.addSubview(aiSaveButton)
+
+        aiSaveStatusLabel = NSTextField(labelWithString: "")
+        aiSaveStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        aiSaveStatusLabel.textColor = .systemGreen
+        aiSaveStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiSaveStatusLabel)
+
+        // Register for text field editing notifications (dirty tracking)
         aiApiKeyField.onTextChange = { [weak self] in
-            self?.saveAIFields()
+            self?.markAIConfigDirty()
         }
-        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
-                                               name: NSControl.textDidEndEditingNotification, object: aiEndpointField)
-        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidEndEditing(_:)),
-                                               name: NSControl.textDidEndEditingNotification, object: aiModelField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
                                                name: NSControl.textDidChangeNotification, object: aiEndpointField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
@@ -563,6 +583,20 @@ class SettingsWindow: NSWindow {
         resetTranslatePromptButton.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(resetTranslatePromptButton)
 
+        translateSaveButton = NSButton(title: "Save", target: self, action: #selector(saveTranslatePromptTapped))
+        translateSaveButton.bezelStyle = .rounded
+        translateSaveButton.controlSize = .small
+        translateSaveButton.font = .systemFont(ofSize: 11)
+        translateSaveButton.translatesAutoresizingMaskIntoConstraints = false
+        translateSaveButton.isEnabled = false
+        container.addSubview(translateSaveButton)
+
+        translateSaveStatusLabel = NSTextField(labelWithString: "")
+        translateSaveStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        translateSaveStatusLabel.textColor = .systemGreen
+        translateSaveStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(translateSaveStatusLabel)
+
         // Separator 2
         let separator2 = NSBox()
         separator2.boxType = .separator
@@ -607,6 +641,20 @@ class SettingsWindow: NSWindow {
         resetOCRPromptButton.font = .systemFont(ofSize: 11)
         resetOCRPromptButton.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(resetOCRPromptButton)
+
+        ocrSaveButton = NSButton(title: "Save", target: self, action: #selector(saveOCRPromptTapped))
+        ocrSaveButton.bezelStyle = .rounded
+        ocrSaveButton.controlSize = .small
+        ocrSaveButton.font = .systemFont(ofSize: 11)
+        ocrSaveButton.translatesAutoresizingMaskIntoConstraints = false
+        ocrSaveButton.isEnabled = false
+        container.addSubview(ocrSaveButton)
+
+        ocrSaveStatusLabel = NSTextField(labelWithString: "")
+        ocrSaveStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        ocrSaveStatusLabel.textColor = .systemGreen
+        ocrSaveStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(ocrSaveStatusLabel)
 
         NSLayoutConstraint.activate([
             // AI Configuration
@@ -653,13 +701,19 @@ class SettingsWindow: NSWindow {
             aiModelField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
             aiModelField.heightAnchor.constraint(equalToConstant: 24),
 
-            // Test button + status
+            // Button row: Test Connection (left) + status | Save + status (right)
             aiTestButton.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: itemGap + 2),
             aiTestButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             aiTestStatusLabel.centerYAnchor.constraint(equalTo: aiTestButton.centerYAnchor),
             aiTestStatusLabel.leadingAnchor.constraint(equalTo: aiTestButton.trailingAnchor, constant: 8),
-            aiTestStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -margin),
+            aiTestStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: aiSaveStatusLabel.leadingAnchor, constant: -8),
+
+            aiSaveButton.centerYAnchor.constraint(equalTo: aiTestButton.centerYAnchor),
+            aiSaveButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            aiSaveStatusLabel.centerYAnchor.constraint(equalTo: aiSaveButton.centerYAnchor),
+            aiSaveStatusLabel.trailingAnchor.constraint(equalTo: aiSaveButton.leadingAnchor, constant: -6),
 
             // Separator
             separator1.topAnchor.constraint(equalTo: aiTestButton.bottomAnchor, constant: sectionGap),
@@ -687,8 +741,15 @@ class SettingsWindow: NSWindow {
             translatePromptView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
             translatePromptView.heightAnchor.constraint(equalToConstant: 80),
 
+            // Button row: Reset (left) | Save + status (right)
             resetTranslatePromptButton.topAnchor.constraint(equalTo: translatePromptView.bottomAnchor, constant: fieldGap),
-            resetTranslatePromptButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            resetTranslatePromptButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            translateSaveButton.centerYAnchor.constraint(equalTo: resetTranslatePromptButton.centerYAnchor),
+            translateSaveButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            translateSaveStatusLabel.centerYAnchor.constraint(equalTo: translateSaveButton.centerYAnchor),
+            translateSaveStatusLabel.trailingAnchor.constraint(equalTo: translateSaveButton.leadingAnchor, constant: -6),
 
             // Separator 2
             separator2.topAnchor.constraint(equalTo: resetTranslatePromptButton.bottomAnchor, constant: sectionGap),
@@ -708,8 +769,15 @@ class SettingsWindow: NSWindow {
             ocrRefinePromptView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
             ocrRefinePromptView.heightAnchor.constraint(equalToConstant: 80),
 
+            // Button row: Reset (left) | Save + status (right)
             resetOCRPromptButton.topAnchor.constraint(equalTo: ocrRefinePromptView.bottomAnchor, constant: fieldGap),
-            resetOCRPromptButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            resetOCRPromptButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            ocrSaveButton.centerYAnchor.constraint(equalTo: resetOCRPromptButton.centerYAnchor),
+            ocrSaveButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            ocrSaveStatusLabel.centerYAnchor.constraint(equalTo: ocrSaveButton.centerYAnchor),
+            ocrSaveStatusLabel.trailingAnchor.constraint(equalTo: ocrSaveButton.leadingAnchor, constant: -6),
         ])
 
         // Bottom anchor to size the container to fit its content
@@ -843,14 +911,16 @@ class SettingsWindow: NSWindow {
         }
     }
 
-    // MARK: - AI Auto-save
-
-    @objc private func aiFieldDidEndEditing(_ notification: Notification) {
-        saveAIFields()
-    }
+    // MARK: - AI Dirty Tracking & Save
 
     @objc private func aiFieldDidChange(_ notification: Notification) {
-        saveAIFields()
+        markAIConfigDirty()
+    }
+
+    private func markAIConfigDirty() {
+        guard !aiConfigDirty else { return }
+        aiConfigDirty = true
+        aiSaveButton.isEnabled = true
     }
 
     private func saveAIFields() {
@@ -858,6 +928,8 @@ class SettingsWindow: NSWindow {
         AISettings.apiEndpoint = aiEndpointField.stringValue
         AISettings.model = aiModelField.stringValue
         updateAIStatus()
+        aiConfigDirty = false
+        aiSaveButton.isEnabled = false
     }
 
     // MARK: - AI Test Connection
@@ -1014,25 +1086,73 @@ class SettingsWindow: NSWindow {
     @objc private func resetTranslatePrompt() {
         translatePromptTextView.string = TranslateSettings.defaultSystemPrompt
         TranslateSettings.rawSystemPrompt = TranslateSettings.defaultSystemPrompt
+        translatePromptDirty = false
+        translateSaveButton.isEnabled = false
+        showTransientFeedback(label: translateSaveStatusLabel, message: "Reset to default")
         logMessage("Translation prompt reset to default")
     }
 
     @objc private func resetOCRRefinePrompt() {
         ocrRefinePromptTextView.string = OCRRefineSettings.defaultSystemPrompt
         OCRRefineSettings.rawSystemPrompt = OCRRefineSettings.defaultSystemPrompt
+        ocrPromptDirty = false
+        ocrSaveButton.isEnabled = false
+        showTransientFeedback(label: ocrSaveStatusLabel, message: "Reset to default")
         logMessage("OCR Refine prompt reset to default")
+    }
+
+    // MARK: - Save Actions
+
+    @objc private func saveAIConfigTapped() {
+        saveAIFields()
+        showTransientFeedback(label: aiSaveStatusLabel, message: "Saved")
+        logMessage("AI configuration saved")
+    }
+
+    @objc private func saveTranslatePromptTapped() {
+        TranslateSettings.rawSystemPrompt = translatePromptTextView.string
+        translatePromptDirty = false
+        translateSaveButton.isEnabled = false
+        showTransientFeedback(label: translateSaveStatusLabel, message: "Saved")
+        logMessage("Translation prompt saved")
+    }
+
+    @objc private func saveOCRPromptTapped() {
+        OCRRefineSettings.rawSystemPrompt = ocrRefinePromptTextView.string
+        ocrPromptDirty = false
+        ocrSaveButton.isEnabled = false
+        showTransientFeedback(label: ocrSaveStatusLabel, message: "Saved")
+        logMessage("OCR Refine prompt saved")
+    }
+
+    /// Show a transient success message on a label, then fade it out after 2 seconds.
+    private func showTransientFeedback(label: NSTextField, message: String) {
+        label.stringValue = message
+        label.textColor = .systemGreen
+        label.alphaValue = 1.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak label] in
+            guard let label = label else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.5
+                label.animator().alphaValue = 0.0
+            } completionHandler: {
+                label.stringValue = ""
+                label.alphaValue = 1.0
+            }
+        }
     }
 }
 
 // MARK: - NSTextViewDelegate (for prompt text view)
 extension SettingsWindow: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
-        if let textView = notification.object as? NSTextView {
-            if textView === translatePromptTextView {
-                TranslateSettings.rawSystemPrompt = textView.string
-            } else if textView === ocrRefinePromptTextView {
-                OCRRefineSettings.rawSystemPrompt = textView.string
-            }
+        guard let textView = notification.object as? NSTextView else { return }
+        if textView === translatePromptTextView && !translatePromptDirty {
+            translatePromptDirty = true
+            translateSaveButton.isEnabled = true
+        } else if textView === ocrRefinePromptTextView && !ocrPromptDirty {
+            ocrPromptDirty = true
+            ocrSaveButton.isEnabled = true
         }
     }
 }

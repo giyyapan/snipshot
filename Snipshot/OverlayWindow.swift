@@ -7,6 +7,7 @@ enum OverlayAction {
     case copy(NSImage, NSRect)
     case save(NSImage, NSRect)
     case pin(NSImage, NSRect)
+    case scrollCapture(NSRect, NSImage)  // Start scrolling capture with the selection rect (screen coords) and clean first frame
     case cancel
 }
 
@@ -433,7 +434,7 @@ class OverlayView: NSView {
     }
 
     // MARK: - Actions
-    enum ActionType { case copy, save, pin, cancel }
+    enum ActionType { case copy, save, pin, scrollCapture, cancel }
 
     func performAction(_ type: ActionType) {
         // Auto-commit any uncommitted text editing before exporting
@@ -449,8 +450,8 @@ class OverlayView: NSView {
             onAction(.cancel)
             return
         }
-        guard let image = cropImage() else { return }
-        // Convert view-local selectionRect to screen coordinates for pin positioning
+
+        // Convert view-local selectionRect to screen coordinates
         let windowOrigin = window?.frame.origin ?? .zero
         let screenRect = NSRect(
             x: selectionRect.origin.x + windowOrigin.x,
@@ -458,11 +459,32 @@ class OverlayView: NSView {
             width: selectionRect.width,
             height: selectionRect.height
         )
+
+        if type == .scrollCapture {
+            // Crop a clean first frame from the original screenshot (no UI controls)
+            guard let cgImage = screenshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+            let viewWidth = bounds.width
+            let viewHeight = bounds.height
+            let scaleX = CGFloat(cgImage.width) / viewWidth
+            let scaleY = CGFloat(cgImage.height) / viewHeight
+            let imageRect = CGRect(
+                x: selectionRect.origin.x * scaleX,
+                y: (viewHeight - selectionRect.origin.y - selectionRect.height) * scaleY,
+                width: selectionRect.width * scaleX,
+                height: selectionRect.height * scaleY
+            )
+            guard let croppedCG = cgImage.cropping(to: imageRect) else { return }
+            let firstFrame = NSImage(cgImage: croppedCG, size: NSSize(width: selectionRect.width, height: selectionRect.height))
+            onAction(.scrollCapture(screenRect, firstFrame))
+            return
+        }
+
+        guard let image = cropImage() else { return }
         switch type {
         case .copy:  onAction(.copy(image, screenRect))
         case .save:  onAction(.save(image, screenRect))
         case .pin:   onAction(.pin(image, screenRect))
-        case .cancel: break
+        case .scrollCapture, .cancel: break
         }
     }
 
@@ -1700,6 +1722,7 @@ class OverlayView: NSView {
             case "m": selectTool(.mosaic)
             case "o": enterOCRMode()
             case "y": enterTranslateMode()
+            case "l": performAction(.scrollCapture)
             default:
                 if mode == .selected {
                     let nudge: CGFloat = 1

@@ -103,13 +103,15 @@ extension OverlayView {
         let undoRedoCount: CGFloat = 2
         let ocrChevronW: CGFloat = 14
         let ocrCount: CGFloat = 2
+        let scrollCaptureCount: CGFloat = 1
         let actionCount: CGFloat = 4
 
         let toolsWidth = toolCount * btnSize + (toolCount - 1) * spacing
         let undoRedoWidth = undoRedoCount * btnSize + (undoRedoCount - 1) * spacing
         let ocrWidth = ocrCount * btnSize + (ocrCount - 1) * spacing + ocrChevronW
+        let scrollCaptureWidth = scrollCaptureCount * btnSize
         let actionsWidth = actionCount * btnSize + (actionCount - 1) * spacing
-        let totalWidth = padding + toolsWidth + dividerW + undoRedoWidth + dividerW + ocrWidth + dividerW + actionsWidth + padding
+        let totalWidth = padding + toolsWidth + dividerW + undoRedoWidth + dividerW + ocrWidth + dividerW + scrollCaptureWidth + dividerW + actionsWidth + padding
         let h: CGFloat = 30
 
         let x = selectionRect.origin.x + selectionRect.width - totalWidth
@@ -183,6 +185,18 @@ extension OverlayView {
         let translateBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "character.book.closed", tooltip: "Translate  Y")
         translateBtn.onPress = { [weak self] in self?.enterTranslateMode() }
         panel.addSubview(translateBtn); bx += btnSize
+
+        // Divider 2b (before scroll capture)
+        bx += (dividerW) / 2
+        let divider2b = NSView(frame: NSRect(x: bx - 0.5, y: 6, width: 1, height: h - 12))
+        divider2b.wantsLayer = true; divider2b.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+        panel.addSubview(divider2b)
+        bx += (dividerW) / 2
+
+        // Scroll Capture button
+        let scrollBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "rectangle.bottomhalf.inset.filled", tooltip: "Scroll Capture  L")
+        scrollBtn.onPress = { [weak self] in self?.performAction(.scrollCapture) }
+        panel.addSubview(scrollBtn); bx += btnSize
 
         // Divider 3 (before actions)
         bx += (dividerW) / 2

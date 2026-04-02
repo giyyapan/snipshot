@@ -71,6 +71,7 @@ swiftc \
     -F "$VENDOR_DIR" \
     -framework Cocoa \
     -framework Carbon \
+    -framework Vision \
     -framework VisionKit \
     -framework ServiceManagement \
     -framework Sparkle \
@@ -92,6 +93,8 @@ swiftc \
     "$PROJECT_DIR/Snipshot/TranslateMode.swift" \
     "$PROJECT_DIR/Snipshot/AIResultWindow.swift" \
     "$PROJECT_DIR/Snipshot/TranslateResultWindow.swift" \
+    "$PROJECT_DIR/Snipshot/StitchingManager.swift" \
+    "$PROJECT_DIR/Snipshot/ScrollCaptureController.swift" \
     -o "$MACOS/Snipshot"
 
 # Copy resources

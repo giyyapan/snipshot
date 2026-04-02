@@ -348,6 +348,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pinImage(image, at: NSPoint(x: rect.origin.x, y: rect.origin.y))
             logMessage("Image pinned to screen.")
 
+        case .scrollCapture(let rect, let firstFrame):
+            logMessage("Starting scroll capture for rect: \(rect)")
+            dismissOverlay()
+            startScrollCapture(rect: rect, firstFrame: firstFrame)
+
         case .cancel:
             logMessage("Capture cancelled.")
             dismissOverlay()
@@ -358,6 +363,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         overlayWindow?.orderOut(nil)
         overlayWindow = nil
         isCapturing = false
+    }
+
+    // MARK: - Scroll Capture
+    private var scrollCaptureController: ScrollCaptureController?
+
+    private func startScrollCapture(rect: NSRect, firstFrame: NSImage) {
+        let mouseLocation = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main else { return }
+
+        let controller = ScrollCaptureController(captureRect: rect, screen: screen, firstFrame: firstFrame)
+        controller.onFinish = { [weak self] in
+            self?.scrollCaptureController = nil
+            self?.isCapturing = false
+            logMessage("Scroll capture finished.")
+        }
+        self.scrollCaptureController = controller
+        controller.start()
     }
 
     // MARK: - Save

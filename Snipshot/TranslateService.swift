@@ -31,7 +31,14 @@ Rules:
 
     static var rawSystemPrompt: String {
         get { UserDefaults.standard.string(forKey: systemPromptKey) ?? defaultSystemPrompt }
-        set { UserDefaults.standard.set(newValue, forKey: systemPromptKey) }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || newValue == defaultSystemPrompt {
+                UserDefaults.standard.removeObject(forKey: systemPromptKey)
+            } else {
+                UserDefaults.standard.set(newValue, forKey: systemPromptKey)
+            }
+        }
     }
 
     static var isConfigured: Bool {
@@ -121,7 +128,14 @@ Rules:
 
     static var rawSystemPrompt: String {
         get { UserDefaults.standard.string(forKey: systemPromptKey) ?? defaultSystemPrompt }
-        set { UserDefaults.standard.set(newValue, forKey: systemPromptKey) }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || newValue == defaultSystemPrompt {
+                UserDefaults.standard.removeObject(forKey: systemPromptKey)
+            } else {
+                UserDefaults.standard.set(newValue, forKey: systemPromptKey)
+            }
+        }
     }
 }
 

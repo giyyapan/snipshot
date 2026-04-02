@@ -10,7 +10,7 @@ struct AISettings {
     static let modelKey = "llmModel"
 
     static let defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    static let defaultModel = "gemini-3-flash-preview"
+    static let defaultModel = "gemini-3.1-flash-lite-preview"
 
     static var apiEndpoint: String {
         get { UserDefaults.standard.string(forKey: apiEndpointKey) ?? defaultEndpoint }
@@ -96,7 +96,7 @@ struct AIMessage {
         let content: [[String: Any]] = [
             [
                 "type": "image_url",
-                "image_url": ["url": imageDataURL]
+                "image_url": ["url": imageDataURL, "detail": "low"]
             ],
             [
                 "type": "text",
