@@ -35,6 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var pinWindows: [PinWindow] = []
     private var settingsWindow: SettingsWindow?
     private var onboardingWindow: OnboardingWindow?
+    private var chatWindow: ChatWindow?
     var isCapturing = false
     private var captureHotkey: HotkeyConfig = HotkeyConfig.defaultCapture
 
@@ -348,6 +349,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pinImage(image, at: NSPoint(x: rect.origin.x, y: rect.origin.y))
             logMessage("Image pinned to screen.")
 
+        case .askAI(let image, let rect):
+            logMessage("Ask AI for rect: \(rect)")
+            dismissOverlay()
+            showChatWindow(image: image)
+
         case .scrollCapture(let rect, let firstFrame):
             logMessage("Starting scroll capture for rect: \(rect)")
             dismissOverlay()
@@ -380,6 +386,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         self.scrollCaptureController = controller
         controller.start()
+    }
+
+    // MARK: - Ask AI Chat
+    private func showChatWindow(image: NSImage) {
+        // Close existing chat window if any
+        chatWindow?.close()
+        chatWindow = nil
+
+        let window = ChatWindow(image: image)
+        window.onClose = { [weak self] in
+            self?.chatWindow = nil
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.chatWindow = window
     }
 
     // MARK: - Save

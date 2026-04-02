@@ -8,6 +8,8 @@ enum OverlayAction {
     case save(NSImage, NSRect)
     case pin(NSImage, NSRect)
     case scrollCapture(NSRect, NSImage)  // Start scrolling capture with the selection rect (screen coords) and clean first frame
+    case askAI(NSImage, NSRect)  // Ask AI about the selected region
+    case runPlugin(Plugin, NSImage, String)  // Run a plugin with image and input text
     case cancel
 }
 
@@ -83,6 +85,7 @@ enum InteractionMode: Equatable {
     case resizingAnnotation(AnnoResizeHandle)
     case editingText
     case ocrMode
+    case pluginInput
 }
 
 // MARK: - OverlayView
@@ -146,6 +149,11 @@ class OverlayView: NSView {
 
     // Translate state
     var translateResultWindow: TranslateResultWindow?
+
+    // Plugin state
+    var activePlugin: Plugin?
+    var pluginPanelView: NSView?
+    var pluginInputField: NSTextField?
 
     // Auto-copy: when enabled, selection completion auto-copies to clipboard
     var autoCopyEnabled: Bool = UserDefaults.standard.bool(forKey: "autoCopyAfterSelection")
@@ -434,7 +442,7 @@ class OverlayView: NSView {
     }
 
     // MARK: - Actions
-    enum ActionType { case copy, save, pin, scrollCapture, cancel }
+    enum ActionType { case copy, save, pin, scrollCapture, askAI, cancel }
 
     func performAction(_ type: ActionType) {
         // Auto-commit any uncommitted text editing before exporting
@@ -484,6 +492,7 @@ class OverlayView: NSView {
         case .copy:  onAction(.copy(image, screenRect))
         case .save:  onAction(.save(image, screenRect))
         case .pin:   onAction(.pin(image, screenRect))
+        case .askAI: onAction(.askAI(image, screenRect))
         case .scrollCapture, .cancel: break
         }
     }
@@ -1723,6 +1732,7 @@ class OverlayView: NSView {
             case "o": enterOCRMode()
             case "y": enterTranslateMode()
             case "l": performAction(.scrollCapture)
+            case "q": performAction(.askAI)
             default:
                 if mode == .selected {
                     let nudge: CGFloat = 1

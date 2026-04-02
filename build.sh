@@ -95,6 +95,7 @@ swiftc \
     "$PROJECT_DIR/Snipshot/TranslateResultWindow.swift" \
     "$PROJECT_DIR/Snipshot/StitchingManager.swift" \
     "$PROJECT_DIR/Snipshot/ScrollCaptureController.swift" \
+    "$PROJECT_DIR/Snipshot/ChatWindow.swift" \
     -o "$MACOS/Snipshot"
 
 # Copy resources
