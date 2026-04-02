@@ -2,7 +2,7 @@ import Cocoa
 import Carbon.HIToolbox
 import ServiceManagement
 
-let kSnipshotVersion = "0.7.0"
+let kSnipshotVersion = "0.8.1"
 
 // MARK: - Hotkey Configuration
 
@@ -58,7 +58,7 @@ class SettingsWindow: NSWindow {
 
     // AI section fields
     private var aiStatusLabel: NSTextField!
-    private var aiApiKeyField: RevealableSecureTextField!
+    private var aiApiKeyField: NSTextField!
     private var aiEndpointField: NSTextField!
     private var aiModelField: NSTextField!
     private var aiTestButton: NSButton!
@@ -448,7 +448,7 @@ class SettingsWindow: NSWindow {
         apiKeyLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(apiKeyLabel)
 
-        aiApiKeyField = RevealableSecureTextField()
+        aiApiKeyField = NSTextField()
         aiApiKeyField.placeholderString = "Paste your API key here"
         aiApiKeyField.font = .systemFont(ofSize: 12)
         aiApiKeyField.translatesAutoresizingMaskIntoConstraints = false
@@ -479,7 +479,7 @@ class SettingsWindow: NSWindow {
         container.addSubview(modelLabel)
 
         aiModelField = NSTextField()
-        aiModelField.placeholderString = "e.g. gemini-3.1-flash-lite-preview"
+        aiModelField.placeholderString = "e.g. gemini-3-flash-preview"
         aiModelField.font = .systemFont(ofSize: 12)
         aiModelField.translatesAutoresizingMaskIntoConstraints = false
         aiModelField.stringValue = AISettings.model
@@ -515,9 +515,8 @@ class SettingsWindow: NSWindow {
         container.addSubview(aiSaveStatusLabel)
 
         // Register for text field editing notifications (dirty tracking)
-        aiApiKeyField.onTextChange = { [weak self] in
-            self?.markAIConfigDirty()
-        }
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: aiApiKeyField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
                                                name: NSControl.textDidChangeNotification, object: aiEndpointField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
@@ -1243,122 +1242,6 @@ class HotkeyRecorderField: NSView {
 }
 
 
-// MARK: - Revealable Secure Text Field
-/// A text field that shows content as plain text when focused and masks it when not.
-/// Internally swaps between NSTextField (plain) and NSSecureTextField (masked).
-class RevealableSecureTextField: NSView {
-    private var secureField: NSSecureTextField!
-    private var plainField: NSTextField!
-    private var isRevealed = false
-
-    /// Called whenever the text content changes (from either field) or editing ends.
-    var onTextChange: (() -> Void)?
-
-    var stringValue: String {
-        get {
-            isRevealed ? plainField.stringValue : secureField.stringValue
-        }
-        set {
-            secureField.stringValue = newValue
-            plainField.stringValue = newValue
-        }
-    }
-
-    var placeholderString: String? {
-        get { secureField.placeholderString }
-        set {
-            secureField.placeholderString = newValue
-            plainField.placeholderString = newValue
-        }
-    }
-
-    var font: NSFont? {
-        get { secureField.font }
-        set {
-            secureField.font = newValue
-            plainField.font = newValue
-        }
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setup()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setup()
-    }
-
-    convenience init() {
-        self.init(frame: .zero)
-    }
-
-    private func setup() {
-        secureField = NSSecureTextField()
-        secureField.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(secureField)
-
-        plainField = NSTextField()
-        plainField.translatesAutoresizingMaskIntoConstraints = false
-        plainField.isHidden = true
-        addSubview(plainField)
-
-        NSLayoutConstraint.activate([
-            secureField.topAnchor.constraint(equalTo: topAnchor),
-            secureField.bottomAnchor.constraint(equalTo: bottomAnchor),
-            secureField.leadingAnchor.constraint(equalTo: leadingAnchor),
-            secureField.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            plainField.topAnchor.constraint(equalTo: topAnchor),
-            plainField.bottomAnchor.constraint(equalTo: bottomAnchor),
-            plainField.leadingAnchor.constraint(equalTo: leadingAnchor),
-            plainField.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
-
-        // Focus / blur notifications to swap fields
-        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidBeginEditing(_:)),
-                                               name: NSControl.textDidBeginEditingNotification, object: secureField)
-        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidBeginEditing(_:)),
-                                               name: NSControl.textDidBeginEditingNotification, object: plainField)
-        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidEndEditing(_:)),
-                                               name: NSControl.textDidEndEditingNotification, object: secureField)
-        NotificationCenter.default.addObserver(self, selector: #selector(fieldDidEndEditing(_:)),
-                                               name: NSControl.textDidEndEditingNotification, object: plainField)
-
-        // Text change notifications to forward to owner
-        NotificationCenter.default.addObserver(self, selector: #selector(innerTextDidChange(_:)),
-                                               name: NSControl.textDidChangeNotification, object: secureField)
-        NotificationCenter.default.addObserver(self, selector: #selector(innerTextDidChange(_:)),
-                                               name: NSControl.textDidChangeNotification, object: plainField)
-    }
-
-    @objc private func innerTextDidChange(_ notification: Notification) {
-        onTextChange?()
-    }
-
-    @objc private func fieldDidBeginEditing(_ notification: Notification) {
-        guard !isRevealed else { return }
-        isRevealed = true
-        plainField.stringValue = secureField.stringValue
-        secureField.isHidden = true
-        plainField.isHidden = false
-        window?.makeFirstResponder(plainField)
-    }
-
-    @objc private func fieldDidEndEditing(_ notification: Notification) {
-        guard isRevealed else { return }
-        isRevealed = false
-        secureField.stringValue = plainField.stringValue
-        plainField.isHidden = true
-        secureField.isHidden = false
-        onTextChange?()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-}
 
 // MARK: - Flipped View (for scroll view document view)
 /// An NSView subclass that flips the coordinate system so Auto Layout constraints

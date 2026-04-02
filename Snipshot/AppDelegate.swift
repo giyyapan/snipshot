@@ -40,14 +40,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Sparkle Auto-Update
     private let updaterController: SPUStandardUpdaterController
+    private var updateAvailable = false
+
+    // Use a separate delegate holder so we can pass `self` to Sparkle.
+    // SPUStandardUpdaterController only accepts the delegate at init time,
+    // but `self` isn't available before super.init(). So we use a trampoline.
+    private let sparkleDelegate = SparkleDelegate()
 
     override init() {
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: sparkleDelegate,
             userDriverDelegate: nil
         )
         super.init()
+        sparkleDelegate.owner = self
+    }
+
+    // MARK: - Sparkle Delegate Callbacks
+
+    fileprivate func handleUpdateFound(_ item: SUAppcastItem) {
+        logMessage("Sparkle found valid update: \(item.displayVersionString) (build \(item.versionString))")
+        DispatchQueue.main.async { [weak self] in
+            self?.updateAvailable = true
+            self?.updateStatusItemBadge()
+            self?.updateStatusMenu()
+        }
+    }
+
+    fileprivate func handleNoUpdateFound(_ error: Error) {
+        logMessage("Sparkle did not find update: \(error.localizedDescription)")
     }
 
     // MARK: - App Lifecycle
@@ -101,10 +123,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateStatusMenu()
     }
 
+    private static let badgeIdentifier = NSUserInterfaceItemIdentifier("updateBadge")
+
+    /// Show or hide a red badge dot on the menu bar icon when an update is available.
+    private func updateStatusItemBadge() {
+        guard let button = statusItem.button else { return }
+        // Remove any existing badge
+        button.subviews.filter { $0.identifier == Self.badgeIdentifier }.forEach { $0.removeFromSuperview() }
+
+        if updateAvailable {
+            let badgeSize: CGFloat = 8
+            let badge = NSView(frame: NSRect(
+                x: button.bounds.width - badgeSize,
+                y: 3,
+                width: badgeSize,
+                height: badgeSize
+            ))
+            badge.identifier = Self.badgeIdentifier
+            badge.wantsLayer = true
+            badge.layer?.backgroundColor = NSColor.systemRed.cgColor
+            badge.layer?.cornerRadius = badgeSize / 2
+            button.addSubview(badge)
+        }
+    }
+
     private func updateStatusMenu() {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Capture (\(captureHotkey.displayString))", action: #selector(startCapture), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+
+        if updateAvailable {
+            // Show prominent "Update Available" item
+            let updateItem = NSMenuItem(title: "🔄 Update Available — Restart to Install", action: #selector(checkForUpdatesNow), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+        }
 
         // Check for Updates menu item
         let checkForUpdatesItem = NSMenuItem(title: "Check for Updates...", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
@@ -115,6 +168,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit Snipshot", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
+    }
+
+    @objc private func checkForUpdatesNow() {
+        updaterController.checkForUpdates(nil)
     }
 
     // MARK: - Global Hotkey
@@ -516,5 +573,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - Sparkle Delegate Trampoline
+/// Separate object that conforms to SPUUpdaterDelegate and forwards calls to AppDelegate.
+/// Needed because SPUStandardUpdaterController requires the delegate at init time,
+/// before `self` (AppDelegate) is fully initialized.
+class SparkleDelegate: NSObject, SPUUpdaterDelegate {
+    weak var owner: AppDelegate?
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        owner?.handleUpdateFound(item)
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+        owner?.handleNoUpdateFound(error)
     }
 }
