@@ -76,6 +76,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         try? FileManager.default.removeItem(atPath: NSHomeDirectory() + "/snipshot_debug.log")
 
+        // Move legacy plaintext AI settings into the provider-first schema and Keychain.
+        AISettings.migrateIfNeeded()
+
         NSApp.setActivationPolicy(.accessory)
 
         // Load saved hotkey config

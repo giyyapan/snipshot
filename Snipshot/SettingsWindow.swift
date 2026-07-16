@@ -58,9 +58,19 @@ class SettingsWindow: NSWindow {
 
     // AI section fields
     private var aiStatusLabel: NSTextField!
-    private var aiApiKeyField: NSTextField!
+    private var aiProviderPopup: NSPopUpButton!
+    private var aiDescriptionLabel: NSTextField!
+    private var aiKeyHelpButton: NSButton!
+    private var aiApiKeyField: NSSecureTextField!
     private var aiEndpointField: NSTextField!
+    private var aiModelPopup: NSPopUpButton!
     private var aiModelField: NSTextField!
+    private var aiRefreshModelsButton: NSButton!
+    private var aiModelStatusLabel: NSTextField!
+    private var aiCustomAuthPopup: NSPopUpButton!
+    private var aiCustomHeaderField: NSTextField!
+    private var aiCustomTokenPopup: NSPopUpButton!
+    private var aiAllowInsecureCheckbox: NSButton!
     private var aiTestButton: NSButton!
     private var aiTestStatusLabel: NSTextField!
     private var aiSaveButton: NSButton!
@@ -83,6 +93,7 @@ class SettingsWindow: NSWindow {
 
     // Dirty tracking — Save buttons are disabled until user makes a change
     private var aiConfigDirty = false
+    private var aiModels: [AIModelDescriptor] = []
     private var translatePromptDirty = false
     private var ocrPromptDirty = false
 
@@ -426,19 +437,33 @@ class SettingsWindow: NSWindow {
         aiStatusLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(aiStatusLabel)
 
-        let aiDesc = NSTextField(wrappingLabelWithString: "Powers all AI features (translation, etc). Get a free API key from Google AI Studio:")
-        aiDesc.font = .systemFont(ofSize: 11, weight: .regular)
-        aiDesc.textColor = .secondaryLabelColor
-        aiDesc.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(aiDesc)
+        aiDescriptionLabel = NSTextField(wrappingLabelWithString: "Choose a provider, load its available models, then test the same request path used by AI features.")
+        aiDescriptionLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        aiDescriptionLabel.textColor = .secondaryLabelColor
+        aiDescriptionLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiDescriptionLabel)
 
-        let getKeyButton = NSButton(title: "Get Free API Key →", target: self, action: #selector(openGoogleAIStudio))
-        getKeyButton.bezelStyle = .inline
-        getKeyButton.isBordered = false
-        getKeyButton.font = .systemFont(ofSize: 11, weight: .medium)
-        getKeyButton.contentTintColor = .systemBlue
-        getKeyButton.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(getKeyButton)
+        aiKeyHelpButton = NSButton(title: "Get API Key →", target: self, action: #selector(openProviderAPIKeyPage))
+        aiKeyHelpButton.bezelStyle = .inline
+        aiKeyHelpButton.isBordered = false
+        aiKeyHelpButton.font = .systemFont(ofSize: 11, weight: .medium)
+        aiKeyHelpButton.contentTintColor = .systemBlue
+        aiKeyHelpButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiKeyHelpButton)
+
+        let providerLabel = NSTextField(labelWithString: "Provider")
+        providerLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        providerLabel.alignment = .right
+        providerLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(providerLabel)
+
+        aiProviderPopup = NSPopUpButton()
+        aiProviderPopup.addItems(withTitles: AIProviderID.allCases.map(\.displayName))
+        aiProviderPopup.selectItem(at: AIProviderID.allCases.firstIndex(of: AISettings.configuration.provider) ?? 0)
+        aiProviderPopup.target = self
+        aiProviderPopup.action = #selector(aiProviderChanged)
+        aiProviderPopup.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiProviderPopup)
 
         // API Key
         let apiKeyLabel = NSTextField(labelWithString: "API Key")
@@ -448,7 +473,7 @@ class SettingsWindow: NSWindow {
         apiKeyLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(apiKeyLabel)
 
-        aiApiKeyField = NSTextField()
+        aiApiKeyField = NSSecureTextField()
         aiApiKeyField.placeholderString = "Paste your API key here"
         aiApiKeyField.font = .systemFont(ofSize: 12)
         aiApiKeyField.translatesAutoresizingMaskIntoConstraints = false
@@ -470,6 +495,46 @@ class SettingsWindow: NSWindow {
         aiEndpointField.stringValue = AISettings.apiEndpoint
         container.addSubview(aiEndpointField)
 
+        let customAuthLabel = NSTextField(labelWithString: "Auth")
+        customAuthLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        customAuthLabel.alignment = .right
+        customAuthLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(customAuthLabel)
+
+        aiCustomAuthPopup = NSPopUpButton()
+        aiCustomAuthPopup.addItems(withTitles: AICustomAuthMode.allCases.map(\.displayName))
+        aiCustomAuthPopup.selectItem(at: AICustomAuthMode.allCases.firstIndex(of: AISettings.configuration.customAuthMode) ?? 0)
+        aiCustomAuthPopup.target = self
+        aiCustomAuthPopup.action = #selector(aiCustomOptionChanged)
+        aiCustomAuthPopup.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiCustomAuthPopup)
+
+        aiCustomHeaderField = NSTextField()
+        aiCustomHeaderField.placeholderString = "Header name, e.g. X-API-Key"
+        aiCustomHeaderField.stringValue = AISettings.configuration.customAPIKeyHeader
+        aiCustomHeaderField.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiCustomHeaderField)
+
+        let tokenLabel = NSTextField(labelWithString: "Token Limit")
+        tokenLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        tokenLabel.alignment = .right
+        tokenLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(tokenLabel)
+
+        aiCustomTokenPopup = NSPopUpButton()
+        aiCustomTokenPopup.addItems(withTitles: AICustomTokenParameter.allCases.map(\.displayName))
+        aiCustomTokenPopup.selectItem(at: AICustomTokenParameter.allCases.firstIndex(of: AISettings.configuration.customTokenParameter) ?? 0)
+        aiCustomTokenPopup.target = self
+        aiCustomTokenPopup.action = #selector(aiCustomOptionChanged)
+        aiCustomTokenPopup.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiCustomTokenPopup)
+
+        aiAllowInsecureCheckbox = NSButton(checkboxWithTitle: "Allow HTTP for localhost only", target: self, action: #selector(aiCustomOptionChanged))
+        aiAllowInsecureCheckbox.state = AISettings.configuration.customAllowsInsecureHTTP ? .on : .off
+        aiAllowInsecureCheckbox.font = .systemFont(ofSize: 10)
+        aiAllowInsecureCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiAllowInsecureCheckbox)
+
         // Model
         let modelLabel = NSTextField(labelWithString: "Model")
         modelLabel.font = .systemFont(ofSize: 12, weight: .medium)
@@ -478,12 +543,31 @@ class SettingsWindow: NSWindow {
         modelLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(modelLabel)
 
+        aiModelPopup = NSPopUpButton()
+        aiModelPopup.addItem(withTitle: "Load models or enter one manually")
+        aiModelPopup.target = self
+        aiModelPopup.action = #selector(aiModelSelected)
+        aiModelPopup.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiModelPopup)
+
+        aiRefreshModelsButton = NSButton(title: "Refresh", target: self, action: #selector(refreshAIModels))
+        aiRefreshModelsButton.bezelStyle = .rounded
+        aiRefreshModelsButton.controlSize = .small
+        aiRefreshModelsButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiRefreshModelsButton)
+
         aiModelField = NSTextField()
-        aiModelField.placeholderString = "e.g. gemini-3-flash-preview"
+        aiModelField.placeholderString = "Manual model ID (always available as fallback)"
         aiModelField.font = .systemFont(ofSize: 12)
         aiModelField.translatesAutoresizingMaskIntoConstraints = false
         aiModelField.stringValue = AISettings.model
         container.addSubview(aiModelField)
+
+        aiModelStatusLabel = NSTextField(labelWithString: "Models have not been loaded.")
+        aiModelStatusLabel.font = .systemFont(ofSize: 10)
+        aiModelStatusLabel.textColor = .secondaryLabelColor
+        aiModelStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiModelStatusLabel)
 
         // Button row: Test Connection (left) + Save (right, disabled by default)
         aiTestButton = NSButton(title: "Test Connection", target: self, action: #selector(testAIConnection))
@@ -521,6 +605,8 @@ class SettingsWindow: NSWindow {
                                                name: NSControl.textDidChangeNotification, object: aiEndpointField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
                                                name: NSControl.textDidChangeNotification, object: aiModelField)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: aiCustomHeaderField)
 
         // Separator
         let separator1 = NSBox()
@@ -663,15 +749,23 @@ class SettingsWindow: NSWindow {
             aiStatusLabel.centerYAnchor.constraint(equalTo: aiTitle.centerYAnchor),
             aiStatusLabel.leadingAnchor.constraint(equalTo: aiTitle.trailingAnchor, constant: 10),
 
-            aiDesc.topAnchor.constraint(equalTo: aiTitle.bottomAnchor, constant: 4),
-            aiDesc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
-            aiDesc.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            aiDescriptionLabel.topAnchor.constraint(equalTo: aiTitle.bottomAnchor, constant: 4),
+            aiDescriptionLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            aiDescriptionLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
 
-            getKeyButton.topAnchor.constraint(equalTo: aiDesc.bottomAnchor, constant: 2),
-            getKeyButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            providerLabel.topAnchor.constraint(equalTo: aiDescriptionLabel.bottomAnchor, constant: itemGap),
+            providerLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            providerLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            aiProviderPopup.centerYAnchor.constraint(equalTo: providerLabel.centerYAnchor),
+            aiProviderPopup.leadingAnchor.constraint(equalTo: providerLabel.trailingAnchor, constant: 8),
+            aiProviderPopup.widthAnchor.constraint(equalToConstant: 170),
+
+            aiKeyHelpButton.centerYAnchor.constraint(equalTo: providerLabel.centerYAnchor),
+            aiKeyHelpButton.leadingAnchor.constraint(equalTo: aiProviderPopup.trailingAnchor, constant: 8),
 
             // API Key row
-            apiKeyLabel.topAnchor.constraint(equalTo: getKeyButton.bottomAnchor, constant: itemGap),
+            apiKeyLabel.topAnchor.constraint(equalTo: providerLabel.bottomAnchor, constant: fieldGap + 4),
             apiKeyLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
             apiKeyLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
 
@@ -690,18 +784,53 @@ class SettingsWindow: NSWindow {
             aiEndpointField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
             aiEndpointField.heightAnchor.constraint(equalToConstant: 24),
 
+            // Custom protocol options (disabled for built-in providers)
+            customAuthLabel.topAnchor.constraint(equalTo: endpointLabel.bottomAnchor, constant: fieldGap + 4),
+            customAuthLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            customAuthLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            aiCustomAuthPopup.centerYAnchor.constraint(equalTo: customAuthLabel.centerYAnchor),
+            aiCustomAuthPopup.leadingAnchor.constraint(equalTo: customAuthLabel.trailingAnchor, constant: 8),
+            aiCustomAuthPopup.widthAnchor.constraint(equalToConstant: 150),
+
+            aiCustomHeaderField.centerYAnchor.constraint(equalTo: customAuthLabel.centerYAnchor),
+            aiCustomHeaderField.leadingAnchor.constraint(equalTo: aiCustomAuthPopup.trailingAnchor, constant: 8),
+            aiCustomHeaderField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            tokenLabel.topAnchor.constraint(equalTo: customAuthLabel.bottomAnchor, constant: fieldGap + 4),
+            tokenLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            tokenLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
+
+            aiCustomTokenPopup.centerYAnchor.constraint(equalTo: tokenLabel.centerYAnchor),
+            aiCustomTokenPopup.leadingAnchor.constraint(equalTo: tokenLabel.trailingAnchor, constant: 8),
+            aiCustomTokenPopup.widthAnchor.constraint(equalToConstant: 180),
+
+            aiAllowInsecureCheckbox.centerYAnchor.constraint(equalTo: tokenLabel.centerYAnchor),
+            aiAllowInsecureCheckbox.leadingAnchor.constraint(equalTo: aiCustomTokenPopup.trailingAnchor, constant: 8),
+
             // Model row
-            modelLabel.topAnchor.constraint(equalTo: endpointLabel.bottomAnchor, constant: fieldGap + 4),
+            modelLabel.topAnchor.constraint(equalTo: tokenLabel.bottomAnchor, constant: fieldGap + 4),
             modelLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
             modelLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
 
-            aiModelField.centerYAnchor.constraint(equalTo: modelLabel.centerYAnchor),
+            aiModelPopup.centerYAnchor.constraint(equalTo: modelLabel.centerYAnchor),
+            aiModelPopup.leadingAnchor.constraint(equalTo: modelLabel.trailingAnchor, constant: 8),
+            aiModelPopup.trailingAnchor.constraint(equalTo: aiRefreshModelsButton.leadingAnchor, constant: -8),
+
+            aiRefreshModelsButton.centerYAnchor.constraint(equalTo: modelLabel.centerYAnchor),
+            aiRefreshModelsButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            aiModelField.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: fieldGap),
             aiModelField.leadingAnchor.constraint(equalTo: modelLabel.trailingAnchor, constant: 8),
             aiModelField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
             aiModelField.heightAnchor.constraint(equalToConstant: 24),
 
+            aiModelStatusLabel.topAnchor.constraint(equalTo: aiModelField.bottomAnchor, constant: 2),
+            aiModelStatusLabel.leadingAnchor.constraint(equalTo: aiModelField.leadingAnchor),
+            aiModelStatusLabel.trailingAnchor.constraint(equalTo: aiModelField.trailingAnchor),
+
             // Button row: Test Connection (left) + status | Save + status (right)
-            aiTestButton.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: itemGap + 2),
+            aiTestButton.topAnchor.constraint(equalTo: aiModelStatusLabel.bottomAnchor, constant: itemGap + 2),
             aiTestButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             aiTestStatusLabel.centerYAnchor.constraint(equalTo: aiTestButton.centerYAnchor),
@@ -784,6 +913,7 @@ class SettingsWindow: NSWindow {
             resetOCRPromptButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -margin)
         ])
 
+        updateProviderUI(loadCachedModels: true)
         return scrollView
     }
 
@@ -922,31 +1052,152 @@ class SettingsWindow: NSWindow {
         aiSaveButton.isEnabled = true
     }
 
-    private func saveAIFields() {
-        AISettings.apiKey = aiApiKeyField.stringValue
-        AISettings.apiEndpoint = aiEndpointField.stringValue
-        AISettings.model = aiModelField.stringValue
-        updateAIStatus()
-        aiConfigDirty = false
-        aiSaveButton.isEnabled = false
+    private var selectedProvider: AIProviderID {
+        AIProviderID.allCases[max(0, aiProviderPopup.indexOfSelectedItem)]
+    }
+
+    private func draftAIConfiguration() -> AIProviderConfiguration {
+        AIProviderConfiguration(
+            provider: selectedProvider,
+            baseURL: aiEndpointField.stringValue,
+            model: aiModelField.stringValue,
+            customAuthMode: AICustomAuthMode.allCases[max(0, aiCustomAuthPopup.indexOfSelectedItem)],
+            customAPIKeyHeader: aiCustomHeaderField.stringValue,
+            customTokenParameter: AICustomTokenParameter.allCases[max(0, aiCustomTokenPopup.indexOfSelectedItem)],
+            customAllowsInsecureHTTP: aiAllowInsecureCheckbox.state == .on
+        )
+    }
+
+    @discardableResult
+    private func saveAIFields() -> Bool {
+        do {
+            try AISettings.save(configuration: draftAIConfiguration(), apiKey: aiApiKeyField.stringValue)
+            updateAIStatus()
+            aiConfigDirty = false
+            aiSaveButton.isEnabled = false
+            return true
+        } catch {
+            aiSaveStatusLabel.stringValue = error.localizedDescription
+            aiSaveStatusLabel.textColor = .systemRed
+            return false
+        }
+    }
+
+    @objc private func aiProviderChanged() {
+        let provider = selectedProvider
+        aiEndpointField.stringValue = provider.defaultBaseURL
+        aiModelField.stringValue = provider.defaultModel
+        aiApiKeyField.stringValue = AISettings.apiKey(for: provider)
+        aiModels = []
+        aiRefreshModelsButton.isEnabled = true
+        updateProviderUI(loadCachedModels: true)
+        markAIConfigDirty()
+    }
+
+    @objc private func aiCustomOptionChanged() {
+        updateProviderUI(loadCachedModels: false)
+        markAIConfigDirty()
+    }
+
+    @objc private func aiModelSelected() {
+        let index = aiModelPopup.indexOfSelectedItem
+        guard index >= 0, index < aiModels.count else { return }
+        aiModelField.stringValue = aiModels[index].id
+        markAIConfigDirty()
+    }
+
+    private func updateProviderUI(loadCachedModels: Bool) {
+        let provider = selectedProvider
+        let isCustom = provider == .custom
+        aiDescriptionLabel.stringValue = isCustom
+            ? "Custom supports the OpenAI Chat Completions protocol with bounded authentication and token-limit options."
+            : "Uses \(provider.displayName)'s native authentication, model listing, request format, and streaming protocol."
+        aiKeyHelpButton.isHidden = provider.helpURL == nil
+        aiEndpointField.isEditable = isCustom
+        aiEndpointField.textColor = isCustom ? .labelColor : .secondaryLabelColor
+        aiCustomAuthPopup.isEnabled = isCustom
+        aiCustomHeaderField.isEnabled = isCustom && AICustomAuthMode.allCases[max(0, aiCustomAuthPopup.indexOfSelectedItem)] == .apiKeyHeader
+        aiCustomTokenPopup.isEnabled = isCustom
+        aiAllowInsecureCheckbox.isEnabled = isCustom
+        aiApiKeyField.placeholderString = isCustom && AICustomAuthMode.allCases[max(0, aiCustomAuthPopup.indexOfSelectedItem)] == .none
+            ? "Optional for unauthenticated localhost endpoints" : "Stored securely in macOS Keychain"
+        if loadCachedModels { loadCachedModelsForSelectedProvider() }
+        if let migrationError = UserDefaults.standard.string(forKey: AIConfigurationStore.migrationErrorKey) {
+            aiModelStatusLabel.stringValue = "Legacy settings migration needs attention: \(migrationError)"
+            aiModelStatusLabel.textColor = .systemRed
+        }
+    }
+
+    private func modelCacheKey(for provider: AIProviderID) -> String { "aiModelCache.\(provider.rawValue)" }
+    private func modelCacheDateKey(for provider: AIProviderID) -> String { "aiModelCacheDate.\(provider.rawValue)" }
+
+    private func loadCachedModelsForSelectedProvider() {
+        let provider = selectedProvider
+        guard let data = UserDefaults.standard.data(forKey: modelCacheKey(for: provider)),
+              let models = try? JSONDecoder().decode([AIModelDescriptor].self, from: data), !models.isEmpty else {
+            rebuildModelPopup(models: [], status: "Models have not been loaded. Manual model entry remains available.")
+            return
+        }
+        let date = UserDefaults.standard.object(forKey: modelCacheDateKey(for: provider)) as? Date
+        let age = date.map { Date().timeIntervalSince($0) }
+        let stale = age == nil || age! > 24 * 60 * 60
+        rebuildModelPopup(models: models, status: stale ? "Showing stale cached models. Refresh recommended." : "Showing cached models. Use Refresh for the latest list.")
+    }
+
+    private func rebuildModelPopup(models: [AIModelDescriptor], status: String) {
+        aiModels = models
+        aiModelPopup.removeAllItems()
+        if models.isEmpty {
+            aiModelPopup.addItem(withTitle: "No loaded models")
+            aiModelPopup.isEnabled = false
+        } else {
+            aiModelPopup.addItems(withTitles: models.map { model in
+                let vision = model.supportsImages == true ? " · vision" : ""
+                return "\(model.displayName)\(vision)"
+            })
+            aiModelPopup.isEnabled = true
+            if let index = models.firstIndex(where: { $0.id == aiModelField.stringValue }) { aiModelPopup.selectItem(at: index) }
+        }
+        aiModelStatusLabel.stringValue = status
+        aiModelStatusLabel.textColor = .secondaryLabelColor
+    }
+
+    @objc private func refreshAIModels() {
+        let configuration = draftAIConfiguration()
+        let requestedProvider = configuration.provider
+        let key = aiApiKeyField.stringValue
+        aiRefreshModelsButton.isEnabled = false
+        aiModelPopup.isEnabled = false
+        aiModelStatusLabel.stringValue = "Loading models…"
+        aiModelStatusLabel.textColor = .secondaryLabelColor
+        AIService.shared.listModels(configuration: configuration, apiKey: key) { [weak self] result in
+            guard let self else { return }
+            guard self.selectedProvider == requestedProvider else { return }
+            self.aiRefreshModelsButton.isEnabled = true
+            switch result {
+            case .success(let models):
+                let status = models.isEmpty ? "The provider returned an empty model list. Manual entry remains available." : "Loaded \(models.count) models."
+                self.rebuildModelPopup(models: models, status: status)
+                if let data = try? JSONEncoder().encode(models) {
+                    UserDefaults.standard.set(data, forKey: self.modelCacheKey(for: requestedProvider))
+                    UserDefaults.standard.set(Date(), forKey: self.modelCacheDateKey(for: requestedProvider))
+                }
+            case .failure(let error):
+                self.aiModelPopup.isEnabled = !self.aiModels.isEmpty
+                self.aiModelStatusLabel.stringValue = error.localizedDescription + " Manual model entry remains available."
+                self.aiModelStatusLabel.textColor = .systemRed
+            }
+        }
     }
 
     // MARK: - AI Test Connection
 
     @objc private func testAIConnection() {
-        saveAIFields()
-
-        guard AISettings.isConfigured else {
-            aiTestStatusLabel.stringValue = "Please enter an API key first"
-            aiTestStatusLabel.textColor = .systemOrange
-            return
-        }
-
         aiTestButton.isEnabled = false
         aiTestStatusLabel.stringValue = "Testing..."
         aiTestStatusLabel.textColor = .secondaryLabelColor
 
-        AIService.shared.testConnection { [weak self] errorMessage in
+        AIService.shared.testConnection(configuration: draftAIConfiguration(), apiKey: aiApiKeyField.stringValue) { [weak self] errorMessage in
             guard let self = self else { return }
             self.aiTestButton.isEnabled = true
 
@@ -1032,6 +1283,7 @@ class SettingsWindow: NSWindow {
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             try? SMAppService.mainApp.unregister()
+            AIProviderID.allCases.forEach { KeychainAICredentialStore.shared.delete(provider: $0) }
             if let bundleId = Bundle.main.bundleIdentifier {
                 UserDefaults.standard.removePersistentDomain(forName: bundleId)
                 UserDefaults.standard.synchronize()
@@ -1043,10 +1295,8 @@ class SettingsWindow: NSWindow {
 
     // MARK: - Translation Actions
 
-    @objc private func openGoogleAIStudio() {
-        if let url = URL(string: "https://aistudio.google.com/apikey") {
-            NSWorkspace.shared.open(url)
-        }
+    @objc private func openProviderAPIKeyPage() {
+        if let url = selectedProvider.helpURL { NSWorkspace.shared.open(url) }
     }
 
     @objc private func openGitHub() {
@@ -1103,9 +1353,11 @@ class SettingsWindow: NSWindow {
     // MARK: - Save Actions
 
     @objc private func saveAIConfigTapped() {
-        saveAIFields()
-        showTransientFeedback(label: aiSaveStatusLabel, message: "Saved")
-        logMessage("AI configuration saved")
+        if saveAIFields() {
+            aiSaveStatusLabel.textColor = .systemGreen
+            showTransientFeedback(label: aiSaveStatusLabel, message: "Saved")
+            logMessage("AI configuration saved for \(selectedProvider.displayName)")
+        }
     }
 
     @objc private func saveTranslatePromptTapped() {

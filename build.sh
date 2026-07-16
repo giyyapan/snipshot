@@ -74,6 +74,7 @@ swiftc \
     -framework Vision \
     -framework VisionKit \
     -framework ServiceManagement \
+    -framework Security \
     -framework Sparkle \
     -framework WebKit \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
@@ -89,6 +90,7 @@ swiftc \
     "$PROJECT_DIR/Snipshot/SettingsWindow.swift" \
     "$PROJECT_DIR/Snipshot/OnboardingWindow.swift" \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
+    "$PROJECT_DIR/Snipshot/AIProvider.swift" \
     "$PROJECT_DIR/Snipshot/AIService.swift" \
     "$PROJECT_DIR/Snipshot/TranslateService.swift" \
     "$PROJECT_DIR/Snipshot/TranslateMode.swift" \

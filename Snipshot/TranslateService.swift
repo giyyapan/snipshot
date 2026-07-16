@@ -145,6 +145,8 @@ class TranslateService {
 
     static let shared = TranslateService()
 
+    private var currentRequest: AIRequestHandle?
+
     private init() {}
 
     /// Translate text using the AI service with optional image context.
@@ -156,7 +158,9 @@ class TranslateService {
         completion: @escaping (Result<String, Error>) -> Void
     ) {
         guard AISettings.isConfigured else {
-            DispatchQueue.main.async { completion(.failure(AIError.notConfigured)) }
+            DispatchQueue.main.async {
+                completion(.failure(AIProviderError.invalidConfiguration("AI is not configured. Choose a provider, model, and credential in Settings.")))
+            }
             return
         }
 
@@ -180,18 +184,22 @@ class TranslateService {
 
         DispatchQueue.main.async { onPhase("Thinking") }
 
-        AIService.shared.streamChat(
+        currentRequest?.cancel()
+        currentRequest = AIService.shared.streamChat(
             messages: [systemMessage, userMessage],
-            temperature: 0.3,
             logPrefix: "Translate",
             onChunk: onChunk,
-            completion: completion
+            completion: { [weak self] result in
+                self?.currentRequest = nil
+                completion(result)
+            }
         )
     }
 
     /// Cancel the current translation request.
     func cancelCurrentRequest() {
-        AIService.shared.cancelCurrentRequest()
+        currentRequest?.cancel()
+        currentRequest = nil
     }
 }
 
