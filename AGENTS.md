@@ -3,10 +3,16 @@
 ## 1. Operational Rules
 
 - **Restart After Build**: After every successful build, kill and relaunch: `pkill -f Snipshot; sleep 1; open build/Snipshot.app`.
-- **Sync Disk Loss**: If `/mnt/desktop/` becomes unresponsive, stop immediately and inform the user. Do NOT attempt workarounds.
 - **No Doc Versioning**: Always update docs in place. Never create `_v2`, `_v3` copies.
-- **Edit Files Directly**: Edit source files directly under `/mnt/desktop/Snipshot/` rather than copying to sandbox first.
+- **Workspace Location**: Except for the Manus-specific rules below, edit the repository directly in the workspace supplied by the current environment. Do not assume `/mnt/desktop/Snipshot/` exists.
 - **Bump Version Before Prod Build**: Every `./build.sh prod` MUST use a new version number. Before building, update `CFBundleShortVersionString` and `CFBundleVersion` in `Info.plist`, and `kSnipshotVersion` in `SettingsWindow.swift`. Never reuse a version that has already been published.
+
+### Manus-Specific Workspace Rules
+
+The following rules apply only when the active agent/runtime is Manus. They do not apply to Codex or other agents:
+
+- **Sync Disk Loss**: If `/mnt/desktop/` becomes unresponsive, stop immediately and inform the user. Do not attempt workarounds.
+- **Edit Files Directly**: Edit source files directly under `/mnt/desktop/Snipshot/` rather than copying them into the Manus sandbox first.
 
 ## 2. Project Structure
 
