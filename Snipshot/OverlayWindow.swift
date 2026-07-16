@@ -425,11 +425,13 @@ class OverlayView: NSView {
         }
         guard autoCopyEnabled, hasSelection else { return }
         if let image = cropImage() {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.writeObjects([image])
-            hasAutoCopied = true
-            logMessage("Auto-copy: selection copied to clipboard.")
+            do {
+                try ImageOutput.writeToPasteboard(image)
+                hasAutoCopied = true
+                logMessage("Auto-copy: selection copied as PNG with TIFF fallback.")
+            } catch {
+                logMessage("Auto-copy failed: \(error.localizedDescription)")
+            }
         }
     }
 
