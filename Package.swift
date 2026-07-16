@@ -10,6 +10,10 @@ let package = Package(
             name: "ImageOutputCore",
             path: "Sources/ImageOutputCore"
         ),
+        .target(
+            name: "SecureInputCore",
+            path: "Sources/SecureInputCore"
+        ),
         .testTarget(
             name: "ImageOutputCoreTests",
             dependencies: ["ImageOutputCore"],
