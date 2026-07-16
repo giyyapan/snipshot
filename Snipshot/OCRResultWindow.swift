@@ -42,6 +42,7 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
     private var ocrAnalysis: ImageAnalysis?
     private var currentText: String = ""
     private var isRefining = false
+    private var refineRequest: AIRequestHandle?
 
     init(near selectionRect: NSRect, screenFrame: NSRect, image: NSImage) {
         self.croppedImage = image
@@ -277,7 +278,8 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
     // MARK: - Actions
 
     @objc private func dismissWindow() {
-        AIService.shared.cancelCurrentRequest()
+        refineRequest?.cancel()
+        refineRequest = nil
         orderOut(nil)
         OCRResultWindowHolder.shared.clear()
     }
@@ -333,8 +335,9 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
             title: "AI Refined",
             savedWidthKey: "ocrRefineWindowWidth",
             savedHeightKey: "ocrRefineWindowHeight",
-            onDismiss: {
-                AIService.shared.cancelCurrentRequest()
+            onDismiss: { [weak self] in
+                self?.refineRequest?.cancel()
+                self?.refineRequest = nil
                 OCRResultWindowHolder.shared.refineWindow = nil
             }
         )
@@ -345,15 +348,16 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
         AIResultWindowHolder.shared.track(refineWindow)
         OCRResultWindowHolder.shared.refineWindow = refineWindow
 
-        AIService.shared.streamChat(
+        refineRequest?.cancel()
+        refineRequest = AIService.shared.streamChat(
             messages: [systemMessage, userMessage],
-            temperature: 0.2,
             logPrefix: "OCR-Refine",
             onChunk: { [weak self, weak refineWindow] accumulated in
                 self?.hideRefineSpinner()
                 refineWindow?.updateContent(accumulated)
             },
             completion: { [weak self, weak refineWindow] result in
+                self?.refineRequest = nil
                 self?.hideRefineSpinner()
                 self?.isRefining = false
                 switch result {
