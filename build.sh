@@ -74,11 +74,13 @@ swiftc \
     -framework Vision \
     -framework VisionKit \
     -framework ServiceManagement \
+    -framework Security \
     -framework Sparkle \
     -framework WebKit \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     "$PROJECT_DIR/Snipshot/main.swift" \
     "$PROJECT_DIR/Snipshot/AppDelegate.swift" \
+    "$PROJECT_DIR/Sources/ImageOutputCore/ImageOutput.swift" \
     "$PROJECT_DIR/Snipshot/UIComponents.swift" \
     "$PROJECT_DIR/Snipshot/OverlayWindow.swift" \
     "$PROJECT_DIR/Snipshot/OverlayPanels.swift" \
@@ -88,11 +90,13 @@ swiftc \
     "$PROJECT_DIR/Snipshot/SettingsWindow.swift" \
     "$PROJECT_DIR/Snipshot/OnboardingWindow.swift" \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
+    "$PROJECT_DIR/Snipshot/AIProvider.swift" \
     "$PROJECT_DIR/Snipshot/AIService.swift" \
     "$PROJECT_DIR/Snipshot/TranslateService.swift" \
     "$PROJECT_DIR/Snipshot/TranslateMode.swift" \
     "$PROJECT_DIR/Snipshot/AIResultWindow.swift" \
     "$PROJECT_DIR/Snipshot/TranslateResultWindow.swift" \
+    "$PROJECT_DIR/Snipshot/StitchingDecision.swift" \
     "$PROJECT_DIR/Snipshot/StitchingManager.swift" \
     "$PROJECT_DIR/Snipshot/ScrollCaptureController.swift" \
     -o "$MACOS/Snipshot"

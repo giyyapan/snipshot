@@ -76,6 +76,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         try? FileManager.default.removeItem(atPath: NSHomeDirectory() + "/snipshot_debug.log")
 
+        // Move legacy plaintext AI settings into the provider-first schema and Keychain.
+        AISettings.migrateIfNeeded()
+
         NSApp.setActivationPolicy(.accessory)
 
         // Load saved hotkey config
@@ -390,11 +393,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleOverlayAction(_ action: OverlayAction) {
         switch action {
         case .copy(let image, _):
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.writeObjects([image])
-            logMessage("Image copied to clipboard.")
-            dismissOverlay()
+            do {
+                try ImageOutput.writeToPasteboard(image)
+                logMessage("Image copied to clipboard as PNG with TIFF fallback.")
+                dismissOverlay()
+            } catch {
+                logMessage("Image copy failed: \(error.localizedDescription)")
+            }
 
         case .save(let image, _):
             // Keep overlay visible while save panel is open
@@ -449,13 +454,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         savePanel.begin { [weak self] response in
             if response == .OK, let url = savePanel.url {
-                if let tiffData = image.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiffData),
-                   let pngData = bitmap.representation(using: .png, properties: [:]) {
-                    try? pngData.write(to: url)
+                do {
+                    try ImageOutput.writePNG(image, to: url)
                     logMessage("Image saved to \(url.path)")
+                    self?.dismissOverlay()
+                } catch {
+                    logMessage("Image save failed for \(url.path): \(error.localizedDescription)")
+                    self?.overlayWindow?.makeKeyAndOrderFront(nil)
                 }
-                self?.dismissOverlay()
             } else {
                 // User cancelled save — restore overlay as key window
                 self?.overlayWindow?.makeKeyAndOrderFront(nil)
