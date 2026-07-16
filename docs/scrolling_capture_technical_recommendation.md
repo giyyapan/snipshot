@@ -86,6 +86,20 @@ Handle the termination of the scrolling capture.
 
 By adopting the manual scroll and Vision-based stitching approach, Snipshot can deliver a robust long screenshot feature that avoids the fragility of automated scrolling while providing a highly requested capability to its users.
 
+## 5. Implemented Reliability Guardrails
+
+The production stitching path now treats Vision registration as a candidate rather than proof of a valid match:
+
+- Registration and overlap checks use a centered region that excludes the outer 8% horizontally and 12% vertically, reducing the influence of scrollbars and common sticky header/footer layouts.
+- Candidate matches must preserve frame pixel geometry, stay within the horizontal-motion limit, retain at least 25% overlap, pass a normalized grayscale residual threshold, and be sufficiently better than nearby alternatives.
+- Rejected frames do not replace the last trusted reference frame. This prevents one animation, notification, or ambiguous frame from poisoning later registrations.
+- Vision subpixel offsets are converted once to consistently rounded backing pixels before position tracking or image cropping. Actual `CGImage` dimensions remain the compositing source of truth.
+- Direction locking commits all trusted movement observed before the lock. Reverse scrolling requires two consecutive trusted measurements before it can crop confirmed output.
+- Frame processing uses a bounded serial queue. Copy and Save stop sampling and drain all accepted work before exporting a stable image.
+- Per-frame logs include the frame index, raw horizontal and vertical transform, refined vertical delta, overlap, best/second-best residual, decision reason, and position state. Raw frame pixels are not written to disk.
+
+These checks intentionally prefer rejecting a questionable frame over silently producing a corrupt image. Manual UI testing is still required to tune thresholds across real applications, especially pages with large central animations, highly repetitive content, very small capture regions, or scrolling so fast that less than 25% of adjacent frames overlaps.
+
 ---
 
 ## References
