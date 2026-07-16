@@ -93,11 +93,13 @@ class PinWindow: NSWindow {
 
     // MARK: - Copy image
     func copyImageToClipboard() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([pinnedImage])
-        logMessage("Pin: Image copied to clipboard.")
-        pinView?.showCopyFeedback()
+        do {
+            try ImageOutput.writeToPasteboard(pinnedImage)
+            logMessage("Pin: Image copied as PNG with TIFF fallback.")
+            pinView?.showCopyFeedback()
+        } catch {
+            logMessage("Pin: Image copy failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Scroll wheel → zoom or opacity

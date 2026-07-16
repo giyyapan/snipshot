@@ -79,6 +79,7 @@ swiftc \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     "$PROJECT_DIR/Snipshot/main.swift" \
     "$PROJECT_DIR/Snipshot/AppDelegate.swift" \
+    "$PROJECT_DIR/Sources/ImageOutputCore/ImageOutput.swift" \
     "$PROJECT_DIR/Snipshot/UIComponents.swift" \
     "$PROJECT_DIR/Snipshot/OverlayWindow.swift" \
     "$PROJECT_DIR/Snipshot/OverlayPanels.swift" \

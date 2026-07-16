@@ -482,10 +482,13 @@ class ScrollCaptureController {
             return
         }
 
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([image])
-        logMessage("[ScrollCapture] Stitched image copied to clipboard. Height: \(Int(stitcher.stitchedPixelHeight))px")
+        do {
+            try ImageOutput.writeToPasteboard(image)
+            logMessage("[ScrollCapture] Stitched image copied as PNG with TIFF fallback. Height: \(Int(stitcher.stitchedPixelHeight))px")
+        } catch {
+            logMessage("[ScrollCapture] Copy failed: \(error.localizedDescription)")
+            return
+        }
 
         stop()
         onFinish?()
@@ -511,20 +514,25 @@ class ScrollCaptureController {
         savePanel.begin { [weak self] response in
             guard let self = self else { return }
             if response == .OK, let url = savePanel.url {
-                if let tiffData = image.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiffData),
-                   let pngData = bitmap.representation(using: .png, properties: [:]) {
-                    try? pngData.write(to: url)
+                do {
+                    try ImageOutput.writePNG(image, to: url)
                     logMessage("[ScrollCapture] Stitched image saved to \(url.path)")
+                    self.stop()
+                    self.onFinish?()
+                } catch {
+                    logMessage("[ScrollCapture] Save failed for \(url.path): \(error.localizedDescription)")
+                    self.resumeCaptureTimer()
                 }
-                self.stop()
-                self.onFinish?()
             } else {
                 // User cancelled save — resume capture
-                self.captureTimer = Timer.scheduledTimer(withTimeInterval: self.captureInterval, repeats: true) { [weak self] _ in
-                    self?.captureFrame()
-                }
+                self.resumeCaptureTimer()
             }
+        }
+    }
+
+    private func resumeCaptureTimer() {
+        captureTimer = Timer.scheduledTimer(withTimeInterval: captureInterval, repeats: true) { [weak self] _ in
+            self?.captureFrame()
         }
     }
 

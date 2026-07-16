@@ -1,5 +1,6 @@
 # Build output
 build/
+.build/
 # Signing keys (NEVER commit)
 keys/
 # Sparkle framework (downloaded at build time)
