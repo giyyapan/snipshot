@@ -28,6 +28,7 @@ class ScrollCaptureController {
     private let stitcher = StitchingManager()
     private var captureTimer: Timer?
     private var isCapturing = false
+    private var isFinishing = false
 
     // MARK: - Windows
 
@@ -81,6 +82,10 @@ class ScrollCaptureController {
             self?.updateHintForDirection(direction)
         }
 
+        stitcher.onFrameRejected = { [weak self] reason in
+            self?.updateHintForRejectedFrame(reason)
+        }
+
         // Feed the clean first frame from the overlay's original screenshot
         if let firstFrame = firstFrame {
             stitcher.addFrame(firstFrame)
@@ -89,10 +94,8 @@ class ScrollCaptureController {
         // Delay the start of periodic capture to ensure the overlay is fully dismissed
         // and the screen shows the actual app content.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self = self, self.isCapturing else { return }
-            self.captureTimer = Timer.scheduledTimer(withTimeInterval: self.captureInterval, repeats: true) { [weak self] _ in
-                self?.captureFrame()
-            }
+            guard let self = self, self.isCapturing, !self.isFinishing else { return }
+            self.resumeCaptureTimer()
         }
     }
 
@@ -101,6 +104,7 @@ class ScrollCaptureController {
         captureTimer?.invalidate()
         captureTimer = nil
         isCapturing = false
+        isFinishing = false
 
         borderWindow?.orderOut(nil)
         borderWindow = nil
@@ -148,7 +152,9 @@ class ScrollCaptureController {
             size: NSSize(width: captureRect.width, height: captureRect.height)
         )
 
-        stitcher.addFrame(nsImage)
+        if !stitcher.addFrame(nsImage) {
+            logMessage("[ScrollCapture] Frame skipped because stitching queue is full.")
+        }
     }
 
     // MARK: - Border Window
@@ -391,8 +397,6 @@ class ScrollCaptureController {
 
     /// Update the hint text when the scroll direction is locked.
     private func updateHintForDirection(_ direction: StitchingManager.ScrollDirection) {
-        guard let hintLabel = hintLabel, let hintWindow = hintWindow else { return }
-
         let newText: String
         switch direction {
         case .down:
@@ -403,13 +407,17 @@ class ScrollCaptureController {
             newText = "Scroll up or down to start capturing"
         }
 
-        // Update text
-        hintLabel.stringValue = newText
+        setHintText(newText)
+    }
+
+    private func setHintText(_ text: String) {
+        guard let hintLabel, let hintWindow else { return }
+        hintLabel.stringValue = text
 
         // Resize window to fit new text
         let font = hintLabel.font ?? NSFont.systemFont(ofSize: 13, weight: .medium)
         let hintPadding: CGFloat = 16
-        let textSize = (newText as NSString).size(withAttributes: [.font: font])
+        let textSize = (text as NSString).size(withAttributes: [.font: font])
         let newWidth = textSize.width + hintPadding * 2
         let hintHeight = hintWindow.frame.height
 
@@ -427,6 +435,17 @@ class ScrollCaptureController {
         }
 
         hintWindow.display()
+    }
+
+    private func updateHintForRejectedFrame(_ reason: StitchMatchRejection) {
+        switch reason {
+        case .frameGeometryChanged, .horizontalMovement:
+            setHintText("Capture geometry changed — restart recommended")
+        case .insufficientOverlap:
+            setHintText("Low overlap — scroll more slowly")
+        default:
+            setHintText("Match lost — hold still or scroll slowly")
+        }
     }
 
     // MARK: - Preview Update
@@ -476,32 +495,39 @@ class ScrollCaptureController {
     // MARK: - Actions
 
     private func copyResult() {
-        guard let image = stitcher.stitchedImage else {
-            logMessage("[ScrollCapture] No stitched image to copy.")
-            cancel()
-            return
+        guard beginFinishing() else { return }
+        stitcher.finish { [weak self] image in
+            guard let self, self.isCapturing else { return }
+            guard let image else {
+                logMessage("[ScrollCapture] No stitched image to copy.")
+                self.cancel()
+                return
+            }
+
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.writeObjects([image])
+            let pixelHeight = image.cgImage(forProposedRect: nil, context: nil, hints: nil)?.height ?? 0
+            logMessage("[ScrollCapture] Stitched image copied after queue drain. Height: \(pixelHeight)px")
+            self.stop()
+            self.onFinish?()
         }
-
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([image])
-        logMessage("[ScrollCapture] Stitched image copied to clipboard. Height: \(Int(stitcher.stitchedPixelHeight))px")
-
-        stop()
-        onFinish?()
     }
 
     private func saveResult() {
-        guard let image = stitcher.stitchedImage else {
-            logMessage("[ScrollCapture] No stitched image to save.")
-            cancel()
-            return
+        guard beginFinishing() else { return }
+        stitcher.finish { [weak self] image in
+            guard let self, self.isCapturing else { return }
+            guard let image else {
+                logMessage("[ScrollCapture] No stitched image to save.")
+                self.cancel()
+                return
+            }
+            self.presentSavePanel(for: image)
         }
+    }
 
-        // Pause capture while save panel is open
-        captureTimer?.invalidate()
-        captureTimer = nil
-
+    private func presentSavePanel(for image: NSImage) {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.png]
         savePanel.nameFieldStringValue = "Snipshot_Scroll_\(Int(Date().timeIntervalSince1970)).png"
@@ -520,11 +546,27 @@ class ScrollCaptureController {
                 self.stop()
                 self.onFinish?()
             } else {
-                // User cancelled save — resume capture
-                self.captureTimer = Timer.scheduledTimer(withTimeInterval: self.captureInterval, repeats: true) { [weak self] _ in
-                    self?.captureFrame()
-                }
+                // The queue was drained before presenting the panel, so resuming starts
+                // from the exact trusted frame represented by the preview.
+                self.isFinishing = false
+                self.resumeCaptureTimer()
             }
+        }
+    }
+
+    private func beginFinishing() -> Bool {
+        guard isCapturing, !isFinishing else { return false }
+        isFinishing = true
+        captureTimer?.invalidate()
+        captureTimer = nil
+        logMessage("[ScrollCapture] Capture paused; draining stitching queue before export.")
+        return true
+    }
+
+    private func resumeCaptureTimer() {
+        guard isCapturing, !isFinishing, captureTimer == nil else { return }
+        captureTimer = Timer.scheduledTimer(withTimeInterval: captureInterval, repeats: true) { [weak self] _ in
+            self?.captureFrame()
         }
     }
 

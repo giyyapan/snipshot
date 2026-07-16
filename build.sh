@@ -93,6 +93,7 @@ swiftc \
     "$PROJECT_DIR/Snipshot/TranslateMode.swift" \
     "$PROJECT_DIR/Snipshot/AIResultWindow.swift" \
     "$PROJECT_DIR/Snipshot/TranslateResultWindow.swift" \
+    "$PROJECT_DIR/Snipshot/StitchingDecision.swift" \
     "$PROJECT_DIR/Snipshot/StitchingManager.swift" \
     "$PROJECT_DIR/Snipshot/ScrollCaptureController.swift" \
     -o "$MACOS/Snipshot"
