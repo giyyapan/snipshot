@@ -2,7 +2,7 @@ import Cocoa
 import Carbon.HIToolbox
 import ServiceManagement
 
-let kSnipshotVersion = "0.9.0"
+let kSnipshotVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.9.1"
 
 // MARK: - Hotkey Configuration
 
@@ -160,13 +160,22 @@ class SettingsWindow: NSWindow {
         aiTab.label = "AI"
         aiTab.view = buildAITab()
 
+        let notionTab = NSTabViewItem(identifier: "notion")
+        notionTab.label = "Notion"
+        notionTab.view = buildNotionTab()
+
         let aboutTab = NSTabViewItem(identifier: "about")
         aboutTab.label = "About"
         aboutTab.view = buildAboutTab()
 
         tabView.addTabViewItem(generalTab)
         tabView.addTabViewItem(aiTab)
+        tabView.addTabViewItem(notionTab)
         tabView.addTabViewItem(aboutTab)
+    }
+
+    func selectTab(_ identifier: String) {
+        tabView.selectTabViewItem(withIdentifier: identifier)
     }
 
     // MARK: - General Tab
@@ -931,6 +940,159 @@ class SettingsWindow: NSWindow {
 
     // MARK: - About Tab
 
+    // MARK: - Notion Tab
+    private var notionStatusLabel: NSTextField!
+    private var notionConnectButton: NSButton!
+    private var notionDisconnectButton: NSButton!
+    private var notionConnectStatusLabel: NSTextField!
+
+    private func buildNotionTab() -> NSView {
+        let scrollView = NSScrollView()
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.autohidesScrollers = true
+
+        let container = FlippedView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = container
+        let clipView = scrollView.contentView
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
+        ])
+
+        let margin: CGFloat = 20
+        let itemGap: CGFloat = 12
+
+        // Title
+        let title = NSTextField(labelWithString: "Notion Integration")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = .labelColor
+        title.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(title)
+
+        // Status badge
+        let (statusText, statusColor) = notionStatusInfo()
+        notionStatusLabel = NSTextField(labelWithString: statusText)
+        notionStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        notionStatusLabel.textColor = statusColor
+        notionStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(notionStatusLabel)
+
+        // Description
+        let desc = NSTextField(wrappingLabelWithString: "Connect your Notion account to create bug cases directly from screenshots. Each team member authorizes with their own account — no shared tokens needed.")
+        desc.font = .systemFont(ofSize: 11)
+        desc.textColor = .secondaryLabelColor
+        desc.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(desc)
+
+        // Database info
+        let dbInfo = NSTextField(labelWithString: "Bug tracker: 🌐 web问题记录表")
+        dbInfo.font = .systemFont(ofSize: 11)
+        dbInfo.textColor = .secondaryLabelColor
+        dbInfo.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(dbInfo)
+
+        // Connect button
+        notionConnectButton = NSButton(title: "Connect Notion Account", target: self, action: #selector(connectNotionTapped))
+        notionConnectButton.bezelStyle = .rounded
+        notionConnectButton.controlSize = .regular
+        notionConnectButton.font = .systemFont(ofSize: 13, weight: .medium)
+        notionConnectButton.translatesAutoresizingMaskIntoConstraints = false
+        notionConnectButton.isHidden = NotionSettings.isAuthorized
+        container.addSubview(notionConnectButton)
+
+        // Disconnect button
+        notionDisconnectButton = NSButton(title: "Disconnect", target: self, action: #selector(disconnectNotionTapped))
+        notionDisconnectButton.bezelStyle = .rounded
+        notionDisconnectButton.controlSize = .small
+        notionDisconnectButton.font = .systemFont(ofSize: 11)
+        notionDisconnectButton.translatesAutoresizingMaskIntoConstraints = false
+        notionDisconnectButton.isHidden = !NotionSettings.isAuthorized
+        container.addSubview(notionDisconnectButton)
+
+        // Status label for connect action
+        notionConnectStatusLabel = NSTextField(labelWithString: "")
+        notionConnectStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        notionConnectStatusLabel.textColor = .secondaryLabelColor
+        notionConnectStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(notionConnectStatusLabel)
+
+        // Layout
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: container.topAnchor, constant: margin),
+            title.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            notionStatusLabel.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            notionStatusLabel.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
+
+            desc.topAnchor.constraint(equalTo: title.bottomAnchor, constant: itemGap),
+            desc.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            desc.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+
+            dbInfo.topAnchor.constraint(equalTo: desc.bottomAnchor, constant: 6),
+            dbInfo.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            notionConnectButton.topAnchor.constraint(equalTo: dbInfo.bottomAnchor, constant: itemGap + 4),
+            notionConnectButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            notionDisconnectButton.topAnchor.constraint(equalTo: dbInfo.bottomAnchor, constant: itemGap + 4),
+            notionDisconnectButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+
+            notionConnectStatusLabel.topAnchor.constraint(equalTo: notionConnectButton.bottomAnchor, constant: 8),
+            notionConnectStatusLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
+            notionConnectStatusLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            notionConnectStatusLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -margin),
+        ])
+
+        return scrollView
+    }
+
+    private func notionStatusInfo() -> (String, NSColor) {
+        if NotionSettings.isAuthorized {
+            let name = NotionSettings.workspaceName
+            return (name.isEmpty ? "Connected ✓" : "Connected: \(name) ✓", .systemGreen)
+        }
+        return ("Not Connected", .systemOrange)
+    }
+
+    private func updateNotionStatus() {
+        let (text, color) = notionStatusInfo()
+        notionStatusLabel.stringValue = text
+        notionStatusLabel.textColor = color
+        notionConnectButton.isHidden = NotionSettings.isAuthorized
+        notionDisconnectButton.isHidden = !NotionSettings.isAuthorized
+    }
+
+    @objc private func connectNotionTapped() {
+        notionConnectButton.isEnabled = false
+        notionConnectStatusLabel.stringValue = "Opening Notion authorization page..."
+        notionConnectStatusLabel.textColor = .secondaryLabelColor
+        NotionService.shared.startOAuth { [weak self] result in
+            guard let self = self else { return }
+            self.notionConnectButton.isEnabled = true
+            switch result {
+            case .success:
+                self.notionConnectStatusLabel.stringValue = "Authorization successful! You can now create bug cases."
+                self.notionConnectStatusLabel.textColor = .systemGreen
+                self.updateNotionStatus()
+            case .failure(let err):
+                self.notionConnectStatusLabel.stringValue = err.localizedDescription
+                self.notionConnectStatusLabel.textColor = .systemRed
+            }
+        }
+    }
+
+    @objc private func disconnectNotionTapped() {
+        NotionSettings.clearToken()
+        notionConnectStatusLabel.stringValue = "Disconnected."
+        notionConnectStatusLabel.textColor = .secondaryLabelColor
+        updateNotionStatus()
+    }
+
     private func buildAboutTab() -> NSView {
         let container = NSView()
         container.autoresizingMask = [.width, .height]
@@ -944,7 +1106,7 @@ class SettingsWindow: NSWindow {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(iconView)
 
-        let nameLabel = NSTextField(labelWithString: "Snipshot")
+        let nameLabel = NSTextField(labelWithString: "Snipshot Bug Report")
         nameLabel.font = .systemFont(ofSize: 20, weight: .bold)
         nameLabel.textColor = .labelColor
         nameLabel.alignment = .center
@@ -965,12 +1127,12 @@ class SettingsWindow: NSWindow {
         descLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(descLabel)
 
-        let authorLabel = NSTextField(labelWithString: "by giyyapan")
-        authorLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        authorLabel.textColor = .tertiaryLabelColor
-        authorLabel.alignment = .center
-        authorLabel.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(authorLabel)
+//        let authorLabel = NSTextField(labelWithString: "by MeeSeek")
+//        authorLabel.font = .systemFont(ofSize: 11, weight: .regular)
+//        authorLabel.textColor = .tertiaryLabelColor
+//        authorLabel.alignment = .center
+//        authorLabel.translatesAutoresizingMaskIntoConstraints = false
+//        container.addSubview(authorLabel)
 
         let githubButton = NSButton(title: "GitHub", target: self, action: #selector(openGitHub))
         githubButton.bezelStyle = .inline
@@ -996,10 +1158,10 @@ class SettingsWindow: NSWindow {
             descLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin + 20),
             descLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -(margin + 20)),
 
-            authorLabel.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 16),
-            authorLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            //authorLabel.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 16),
+            //authorLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
 
-            githubButton.topAnchor.constraint(equalTo: authorLabel.bottomAnchor, constant: 8),
+            githubButton.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 16),
             githubButton.centerXAnchor.constraint(equalTo: container.centerXAnchor),
         ])
 

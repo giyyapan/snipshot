@@ -26,7 +26,7 @@ API_KEY_ID="F34YUX6BRT"
 API_ISSUER_ID="cee32055-ad0c-4658-aba5-e22215d14fef"
 TEAM_ID="AN68AMD3JC"
 API_KEY_FILE="$KEYS_DIR/AuthKey_${API_KEY_ID}.p8"
-BUNDLE_ID="com.giyyapan.snipshot"
+BUNDLE_ID="com.meeseek.snipshot-bug"
 
 # --- Sparkle ---
 VENDOR_DIR="$PROJECT_DIR/vendor"
@@ -104,6 +104,8 @@ swiftc \
     "$PROJECT_DIR/Snipshot/StitchingDecision.swift" \
     "$PROJECT_DIR/Snipshot/StitchingManager.swift" \
     "$PROJECT_DIR/Snipshot/ScrollCaptureController.swift" \
+    "$PROJECT_DIR/Snipshot/NotionService.swift" \
+    "$PROJECT_DIR/Snipshot/NotionBugPanel.swift" \
     -o "$MACOS/Snipshot"
 
 # Copy resources
