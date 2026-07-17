@@ -98,6 +98,175 @@ enum AnnoResizeHandle: Equatable {
     case startPoint, endPoint
 }
 
+// MARK: - Text Annotation Typography & Layout
+/// The single source of truth for text annotation typography and TextKit layout.
+///
+/// Text annotations intentionally do not soft-wrap. The editor grows horizontally,
+/// and only explicit newline characters create additional lines. This keeps the
+/// persisted model (`text` + top-left point) sufficient to reproduce the exact
+/// layout when drawing, exporting, and re-entering edit mode.
+enum AnnotationTextLayout {
+    static let primaryFontName = "AvenirNext-Medium"
+    static let fontSizeMultiplier: CGFloat = 4
+    static let unconstrainedDimension: CGFloat = 1_000_000
+    static let emptyEditorWidth: CGFloat = 24
+
+    struct Layout {
+        let textStorage: NSTextStorage
+        let layoutManager: NSLayoutManager
+        let textContainer: NSTextContainer
+        let usedRect: NSRect
+        let lineFragmentCount: Int
+
+        var size: NSSize { usedRect.size }
+    }
+
+    static func fontSize(forStrokeWidth strokeWidth: CGFloat) -> CGFloat {
+        strokeWidth * fontSizeMultiplier
+    }
+
+    static func font(ofSize fontSize: CGFloat) -> NSFont {
+        let systemFallback = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let descriptor = NSFontDescriptor(fontAttributes: [
+            .name: primaryFontName,
+            .cascadeList: [systemFallback.fontDescriptor]
+        ])
+        return NSFont(descriptor: descriptor, size: fontSize) ?? systemFallback
+    }
+
+    static func paragraphStyle() -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byClipping
+        style.lineSpacing = 0
+        style.paragraphSpacing = 0
+        style.paragraphSpacingBefore = 0
+        return style
+    }
+
+    static func attributes(fontSize: CGFloat, color: NSColor) -> [NSAttributedString.Key: Any] {
+        [
+            .font: font(ofSize: fontSize),
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle()
+        ]
+    }
+
+    static func attributedString(text: String, fontSize: CGFloat, color: NSColor) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: attributes(fontSize: fontSize, color: color))
+    }
+
+    static func layout(text: String, fontSize: CGFloat, color: NSColor) -> Layout {
+        let storage = NSTextStorage(attributedString: attributedString(text: text, fontSize: fontSize, color: color))
+        let manager = NSLayoutManager()
+        manager.usesFontLeading = true
+
+        let container = NSTextContainer(
+            containerSize: NSSize(width: unconstrainedDimension, height: unconstrainedDimension)
+        )
+        container.lineFragmentPadding = 0
+        container.widthTracksTextView = false
+        container.heightTracksTextView = false
+
+        manager.addTextContainer(container)
+        storage.addLayoutManager(manager)
+        manager.ensureLayout(for: container)
+
+        var lineFragmentCount = 0
+        let glyphRange = manager.glyphRange(for: container)
+        if !text.isEmpty {
+            manager.enumerateLineFragments(forGlyphRange: glyphRange) { _, _, _, _, _ in
+                lineFragmentCount += 1
+            }
+        }
+        let usedRect = text.isEmpty ? NSRect.zero : manager.usedRect(for: container)
+
+        return Layout(
+            textStorage: storage,
+            layoutManager: manager,
+            textContainer: container,
+            usedRect: usedRect,
+            lineFragmentCount: lineFragmentCount
+        )
+    }
+
+    static func configure(
+        textView: NSTextView,
+        text: String,
+        fontSize: CGFloat,
+        color: NSColor
+    ) {
+        textView.isRichText = false
+        textView.textContainerInset = .zero
+        textView.isHorizontallyResizable = true
+        textView.isVerticallyResizable = true
+        textView.minSize = .zero
+        textView.maxSize = NSSize(width: unconstrainedDimension, height: unconstrainedDimension)
+        textView.defaultParagraphStyle = paragraphStyle()
+        textView.font = font(ofSize: fontSize)
+        textView.textColor = color
+        let textAttributes = attributes(fontSize: fontSize, color: color)
+
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.containerSize = NSSize(
+            width: unconstrainedDimension,
+            height: unconstrainedDimension
+        )
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.heightTracksTextView = false
+        textView.layoutManager?.usesFontLeading = true
+        textView.textStorage?.setAttributedString(
+            NSAttributedString(string: text, attributes: textAttributes)
+        )
+        textView.typingAttributes = textAttributes
+        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+    }
+
+    static func usedRect(in textView: NSTextView) -> NSRect {
+        guard let manager = textView.layoutManager,
+              let container = textView.textContainer else { return .zero }
+        manager.ensureLayout(for: container)
+        return manager.usedRect(for: container)
+    }
+
+    static func editorSize(for textView: NSTextView, fontSize: CGFloat, color: NSColor) -> NSSize {
+        let usedRect = usedRect(in: textView)
+        guard textView.string.isEmpty else { return usedRect.size }
+        let lineHeight = layout(text: "M", fontSize: fontSize, color: color).size.height
+        return NSSize(width: emptyEditorWidth, height: lineHeight)
+    }
+
+    static func boundingRect(text: String, fontSize: CGFloat, color: NSColor, topLeft: NSPoint) -> NSRect {
+        guard !text.isEmpty else { return .zero }
+        let size = layout(text: text, fontSize: fontSize, color: color).size
+        return NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
+    }
+
+    static func frame(topLeft: NSPoint, size: NSSize) -> NSRect {
+        NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
+    }
+
+    static func draw(text: String, fontSize: CGFloat, color: NSColor, topLeft: NSPoint) {
+        guard !text.isEmpty else { return }
+        let textLayout = layout(text: text, fontSize: fontSize, color: color)
+        let glyphRange = textLayout.layoutManager.glyphRange(for: textLayout.textContainer)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+        // TextKit lays out from a top-left origin, while annotation canvases use
+        // AppKit's bottom-left coordinates. Flip once around the persisted top-left
+        // anchor so layout, selection bounds, and exported glyphs share one geometry.
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        context.saveGState()
+        context.translateBy(x: topLeft.x, y: topLeft.y)
+        context.scaleBy(x: 1, y: -1)
+        let containerOrigin = NSPoint(x: -textLayout.usedRect.minX, y: -textLayout.usedRect.minY)
+        textLayout.layoutManager.drawBackground(forGlyphRange: glyphRange, at: containerOrigin)
+        textLayout.layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: containerOrigin)
+        context.restoreGState()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+}
+
 // MARK: - Annotation Element
 class AnnotationElement {
     var id: UUID = UUID()
@@ -163,12 +332,12 @@ class AnnotationElement {
     }
 
     private var textBoundingRect: NSRect {
-        guard !text.isEmpty else { return .zero }
-        let font = NSFont.systemFont(ofSize: strokeWidth * 4, weight: .medium)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-        let size = (text as NSString).size(withAttributes: attrs)
-        // startPoint is TOP-LEFT. In non-flipped view, bounding rect origin is bottom-left.
-        return NSRect(x: startPoint.x - 4, y: startPoint.y - size.height - 2, width: size.width + 8, height: size.height + 4)
+        AnnotationTextLayout.boundingRect(
+            text: text,
+            fontSize: AnnotationTextLayout.fontSize(forStrokeWidth: strokeWidth),
+            color: color,
+            topLeft: startPoint
+        )
     }
 
     func hitTest(point: NSPoint) -> Bool {
@@ -786,20 +955,12 @@ class AnnotationRenderer {
     }
 
     private static func drawText(element: AnnotationElement, ox: CGFloat, oy: CGFloat) {
-        let font = NSFont.systemFont(ofSize: element.strokeWidth * 4, weight: .medium)
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: element.color
-        ]
-        // Don't render empty text elements
-        guard !element.text.isEmpty else { return }
-        // startPoint is the TOP-LEFT of the text in selection-relative coords.
-        // NSString.draw(at:) expects the BOTTOM-LEFT of the text bounding box.
-        // In non-flipped view: bottom-left Y = top-left Y - textHeight
-        let textSize = (element.text as NSString).size(withAttributes: attrs)
-        let drawY = element.startPoint.y + oy - textSize.height
-        let point = NSPoint(x: element.startPoint.x + ox, y: drawY)
-        (element.text as NSString).draw(at: point, withAttributes: attrs)
+        AnnotationTextLayout.draw(
+            text: element.text,
+            fontSize: AnnotationTextLayout.fontSize(forStrokeWidth: element.strokeWidth),
+            color: element.color,
+            topLeft: NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy)
+        )
     }
 
     private static func drawMarker(element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat) {

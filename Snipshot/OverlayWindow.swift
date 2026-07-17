@@ -1800,67 +1800,46 @@ class OverlayView: NSView {
     // Coordinate convention: element.startPoint stores the TOP-LEFT corner of the text
     // in selection-relative coordinates (non-flipped: higher Y = higher on screen).
     //
-    // For NSString.draw(at:): point is bottom-left, so drawY = startPoint.y - textHeight
-    // For NSScrollView frame: origin.y is bottom edge, top = origin.y + height
-    //   So sv.origin.y = screenTopY - fieldHeight, where screenTopY = startPoint.y + selectionRect.origin.y
-    // On commit: startPoint.y = (sv.origin.y + sv.height) - selectionRect.origin.y
+    // AnnotationTextLayout maps that top-left anchor to the non-flipped editor frame.
+    // On commit, the same top edge is converted back to selection-relative coordinates.
 
     func showTextEditor(for element: AnnotationElement) {
-        let fontSize = element.strokeWidth * 4
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let fontSize = AnnotationTextLayout.fontSize(forStrokeWidth: element.strokeWidth)
+        let measuredSize = element.text.isEmpty
+            ? NSSize(
+                width: AnnotationTextLayout.emptyEditorWidth,
+                height: AnnotationTextLayout.layout(text: "M", fontSize: fontSize, color: element.color).size.height
+            )
+            : AnnotationTextLayout.layout(text: element.text, fontSize: fontSize, color: element.color).size
 
-        let sampleAttrs: [NSAttributedString.Key: Any] = [.font: font]
-        let textSize = ("Xg" as NSString).size(withAttributes: sampleAttrs)
-        let singleLineHeight = textSize.height
-
-        // For NEW elements, startPoint is the click position = top-left. No adjustment needed.
-        // For existing elements (re-edit), startPoint is already the stored top-left.
-
-        // Calculate width from content
-        let minWidth: CGFloat = 60
-        let contentWidth: CGFloat
-        if !element.text.isEmpty {
-            let lines = element.text.components(separatedBy: "\n")
-            let maxLineWidth = lines.map { ($0 as NSString).size(withAttributes: sampleAttrs).width }.max() ?? 0
-            contentWidth = maxLineWidth + 16
-        } else {
-            contentWidth = minWidth
-        }
-        let fieldWidth = max(minWidth, contentWidth)
-
-        // Calculate height based on number of lines
-        let lineCount = max(1, element.text.components(separatedBy: "\n").count)
-        let fieldHeight = singleLineHeight * CGFloat(lineCount) + 4
-
-        // Convert startPoint (top-left, selection-relative) to screen coordinates.
-        // In non-flipped view: scrollView.frame.origin.y is bottom edge.
-        // Top of scrollView = origin.y + height = startPoint.y + selectionRect.origin.y
-        // So origin.y = startPoint.y + selectionRect.origin.y - fieldHeight
-        let screenTopY = element.startPoint.y + selectionRect.origin.y
-        let svOriginY = screenTopY - fieldHeight
-        let svOriginX = element.startPoint.x + selectionRect.origin.x
+        // Convert the persisted selection-relative top-left into overlay coordinates.
+        let screenTopLeft = NSPoint(
+            x: element.startPoint.x + selectionRect.origin.x,
+            y: element.startPoint.y + selectionRect.origin.y
+        )
+        let editorFrame = AnnotationTextLayout.frame(topLeft: screenTopLeft, size: measuredSize)
 
         // Create NSTextView wrapped in NSScrollView
-        let scrollView = NSScrollView(frame: NSRect(x: svOriginX, y: svOriginY, width: fieldWidth, height: fieldHeight))
+        let scrollView = NSScrollView(frame: editorFrame)
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
 
-        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: fieldWidth, height: fieldHeight))
-        tv.font = font
-        tv.textColor = element.color
+        let tv = NSTextView(frame: NSRect(origin: .zero, size: measuredSize))
         tv.backgroundColor = .clear
         tv.drawsBackground = false
         tv.isEditable = true
         tv.isSelectable = true
-        tv.isRichText = false
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isFieldEditor = false
-        tv.textContainerInset = NSSize(width: 0, height: 0)
-        tv.textContainer?.lineFragmentPadding = 2
-        tv.string = element.text
+        AnnotationTextLayout.configure(
+            textView: tv,
+            text: element.text,
+            fontSize: fontSize,
+            color: element.color
+        )
         tv.delegate = self
 
         scrollView.documentView = tv
@@ -1869,34 +1848,29 @@ class OverlayView: NSView {
 
         textEditView = tv
         textEditScrollView = scrollView
+        resizeTextEditor()
     }
 
     /// Auto-resize the text editor based on content.
     /// Grows downward from the fixed top edge (non-flipped: top = origin.y + height stays constant).
     func resizeTextEditor() {
-        guard let tv = textEditView, let sv = textEditScrollView else { return }
-        let font = tv.font ?? NSFont.systemFont(ofSize: 14)
-        let sampleAttrs: [NSAttributedString.Key: Any] = [.font: font]
-        let singleLineHeight = ("Xg" as NSString).size(withAttributes: sampleAttrs).height
-
-        let text = tv.string.isEmpty ? "W" : tv.string
-        let lines = text.components(separatedBy: "\n")
-        let maxLineWidth = lines.map { ($0 as NSString).size(withAttributes: sampleAttrs).width }.max() ?? 0
-        let lineCount = max(1, lines.count)
-
-        let minWidth: CGFloat = 60
-        let newWidth = max(minWidth, maxLineWidth + 16)
-        let newHeight = singleLineHeight * CGFloat(lineCount) + 4
+        guard let tv = textEditView,
+              let sv = textEditScrollView,
+              let element = annoState.selectedElement else { return }
+        let size = AnnotationTextLayout.editorSize(
+            for: tv,
+            fontSize: AnnotationTextLayout.fontSize(forStrokeWidth: element.strokeWidth),
+            color: element.color
+        )
 
         // Keep top edge fixed: top = origin.y + height
         let currentTop = sv.frame.origin.y + sv.frame.height
         var frame = sv.frame
-        frame.size.width = newWidth
-        frame.size.height = newHeight
-        frame.origin.y = currentTop - newHeight  // grow downward from fixed top
+        frame.size = size
+        frame.origin.y = currentTop - size.height  // grow downward from fixed top
         sv.frame = frame
 
-        tv.frame = NSRect(x: 0, y: 0, width: newWidth, height: newHeight)
+        tv.frame = NSRect(origin: .zero, size: size)
     }
 
     func commitTextEditing() {

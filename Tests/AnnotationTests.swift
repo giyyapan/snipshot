@@ -21,6 +21,11 @@ private enum AnnotationTests {
         try test("glow preserves the sharp vector body color and alpha", testGlowPreservesBodyColorAndAlpha)
         try test("overlay and export share rendering without exporting selection UI", testOverlayAndExportRendering)
         try test("vector glow clips safely at screenshot edges", testGlowAtScreenshotEdges)
+        try test("text typography supports English, Chinese, and mixed content", testTextTypographyAndFallback)
+        try test("text layout handles empty, single-line, and explicit newlines", testTextLayoutVariants)
+        try test("text editor and renderer share TextKit bounds without soft wrapping", testTextEditorMatchesRenderer)
+        try test("text bounds, hit testing, and rendering cover the same glyph area", testTextBoundsHitTestingAndRendering)
+        try test("text re-edit layout and undo redo preserve typography state", testTextReEditAndUndoRedo)
 
         print("AnnotationTests: \(testCount) tests passed")
     }
@@ -287,6 +292,150 @@ private enum AnnotationTests {
         try expect(visiblePixels > 0, "edge-clipped vectors did not render")
     }
 
+    private static func testTextTypographyAndFallback() throws {
+        let fontSize: CGFloat = 16
+        let font = AnnotationTextLayout.font(ofSize: fontSize)
+        try expect(font.fontName == AnnotationTextLayout.primaryFontName, "text did not use the Avenir Next primary face")
+
+        let english = AnnotationTextLayout.layout(text: "Readable English", fontSize: fontSize, color: .black)
+        let chinese = AnnotationTextLayout.layout(text: "清晰中文标注", fontSize: fontSize, color: .black)
+        let mixed = AnnotationTextLayout.layout(text: "Snipshot 截图标注 2026", fontSize: fontSize, color: .black)
+
+        for (name, layout) in [("English", english), ("Chinese", chinese), ("mixed", mixed)] {
+            try expect(layout.usedRect.width > 0 && layout.usedRect.height > 0, "\(name) text did not produce layout bounds")
+            try expect(layout.lineFragmentCount == 1, "\(name) text unexpectedly wrapped")
+            try expect(layout.layoutManager.numberOfGlyphs > 0, "\(name) text did not resolve renderable glyphs")
+        }
+        try expect(mixed.usedRect.width > chinese.usedRect.width, "mixed fallback layout lost its Latin run")
+    }
+
+    private static func testTextLayoutVariants() throws {
+        let fontSize: CGFloat = 16
+        let empty = AnnotationTextLayout.layout(text: "", fontSize: fontSize, color: .systemRed)
+        try expect(empty.usedRect == .zero, "empty text should have zero final bounds")
+        try expect(empty.lineFragmentCount == 0, "empty text should not create a rendered line")
+
+        let single = AnnotationTextLayout.layout(text: "Single line 单行", fontSize: fontSize, color: .systemRed)
+        let multiline = AnnotationTextLayout.layout(
+            text: "First line 第一行\nSecond line 第二行",
+            fontSize: fontSize,
+            color: .systemRed
+        )
+        try expect(single.lineFragmentCount == 1, "single-line text created multiple fragments")
+        try expect(multiline.lineFragmentCount == 2, "explicit newline was not preserved")
+        try expect(multiline.usedRect.height > single.usedRect.height, "explicit newline did not increase text height")
+
+        let longestExplicitLine = max(
+            AnnotationTextLayout.layout(text: "First line 第一行", fontSize: fontSize, color: .systemRed).usedRect.width,
+            AnnotationTextLayout.layout(text: "Second line 第二行", fontSize: fontSize, color: .systemRed).usedRect.width
+        )
+        try expect(approximatelyEqual(multiline.usedRect.width, longestExplicitLine), "multiline width did not match its longest explicit line")
+    }
+
+    private static func testTextEditorMatchesRenderer() throws {
+        let fontSize: CGFloat = 16
+        let text = "A long English 中文 mixed annotation near the old wrapping boundary"
+        let finalLayout = AnnotationTextLayout.layout(text: text, fontSize: fontSize, color: .systemBlue)
+        try expect(finalLayout.usedRect.width > 80, "long-text fixture did not cross the editor boundary")
+        try expect(finalLayout.lineFragmentCount == 1, "unconstrained final layout soft-wrapped")
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 80, height: 20))
+        AnnotationTextLayout.configure(
+            textView: textView,
+            text: text,
+            fontSize: fontSize,
+            color: .systemBlue
+        )
+        let editorUsedRect = AnnotationTextLayout.usedRect(in: textView)
+        try expect(approximatelyEqual(editorUsedRect, finalLayout.usedRect), "editor and final TextKit usedRect differ")
+        try expect(editorUsedRect.width > 80, "editor wrapped instead of expanding horizontally")
+
+        let topLeft = NSPoint(x: 35, y: 140)
+        let editorFrame = AnnotationTextLayout.frame(topLeft: topLeft, size: editorUsedRect.size)
+        let finalBounds = AnnotationTextLayout.boundingRect(
+            text: text,
+            fontSize: fontSize,
+            color: .systemBlue,
+            topLeft: topLeft
+        )
+        try expect(approximatelyEqual(editorFrame, finalBounds), "editor frame and final bounds do not share the same top-left anchor")
+    }
+
+    private static func testTextBoundsHitTestingAndRendering() throws {
+        let text = element(.text, from: NSPoint(x: 18, y: 92), to: .zero, strokeWidth: 4)
+        text.text = "Bounds 边界\nHit test 命中"
+        text.color = .systemPurple
+        let bounds = text.boundingRect
+        try expect(bounds.width > 0 && bounds.height > 0, "text element did not expose layout bounds")
+        try expect(text.hitTest(point: NSPoint(x: bounds.midX, y: bounds.midY)), "text missed a point inside rendered bounds")
+        try expect(!text.hitTest(point: NSPoint(x: bounds.maxX + 2, y: bounds.midY)), "text hit outside its rendered width")
+        try expect(!text.hitTest(point: NSPoint(x: bounds.midX, y: bounds.minY - 2)), "text hit below its rendered height")
+
+        let imageSize = NSSize(width: 240, height: 120)
+        let transparent = makeSolidImage(size: imageSize, color: .clear)
+        let rendered = AnnotationRenderer.renderAnnotationsOntoImage(
+            baseImage: transparent,
+            annotations: [text],
+            selectionRect: NSRect(origin: .zero, size: imageSize),
+            screenshot: transparent
+        )
+        let inkBounds = try nonTransparentBounds(in: rendered)
+        try expect(!inkBounds.isNull && inkBounds.width > 0 && inkBounds.height > 0, "mixed text did not render visible pixels")
+        try expect(inkBounds.minX >= bounds.minX - 1, "text rendered left of its selection bounds: ink=\(inkBounds), layout=\(bounds)")
+        try expect(inkBounds.maxX <= bounds.maxX + 1, "text rendered right of its selection bounds: ink=\(inkBounds), layout=\(bounds)")
+        try expect(inkBounds.minY >= bounds.minY - 1, "text rendered below its selection bounds: ink=\(inkBounds), layout=\(bounds)")
+        try expect(inkBounds.maxY <= bounds.maxY + 1, "text rendered above its selection bounds: ink=\(inkBounds), layout=\(bounds)")
+    }
+
+    private static func testTextReEditAndUndoRedo() throws {
+        let original = element(.text, from: NSPoint(x: 42, y: 96), to: .zero, strokeWidth: 4)
+        original.text = "Re-edit 重编辑\nkeeps layout"
+        original.color = .systemOrange
+
+        let firstLayout = AnnotationTextLayout.layout(
+            text: original.text,
+            fontSize: AnnotationTextLayout.fontSize(forStrokeWidth: original.strokeWidth),
+            color: original.color
+        )
+        let reEditView = NSTextView(frame: NSRect(origin: .zero, size: firstLayout.size))
+        AnnotationTextLayout.configure(
+            textView: reEditView,
+            text: original.text,
+            fontSize: AnnotationTextLayout.fontSize(forStrokeWidth: original.strokeWidth),
+            color: original.color
+        )
+        let reEditLayout = AnnotationTextLayout.usedRect(in: reEditView)
+        try expect(approximatelyEqual(firstLayout.usedRect, reEditLayout), "re-entering edit mode changed text layout")
+
+        let state = AnnotationState()
+        state.elements = [original]
+        state.pushUndo()
+        original.text = "Changed 已修改\nwith explicit line"
+        original.startPoint = NSPoint(x: 60, y: 88)
+        original.strokeWidth = 5
+        original.color = .systemGreen
+        let changedBounds = original.boundingRect
+
+        state.undo()
+        guard let undone = state.elements.first else {
+            throw AnnotationTestFailure(message: "text undo removed the element")
+        }
+        try expect(undone.text == "Re-edit 重编辑\nkeeps layout", "text undo did not restore content")
+        try expect(undone.startPoint == NSPoint(x: 42, y: 96), "text undo did not restore position")
+        try expect(undone.strokeWidth == 4, "text undo did not restore size")
+        try expect(undone.color.isEqual(to: NSColor.systemOrange), "text undo did not restore color")
+
+        state.redo()
+        guard let redone = state.elements.first else {
+            throw AnnotationTestFailure(message: "text redo removed the element")
+        }
+        try expect(redone.text == "Changed 已修改\nwith explicit line", "text redo did not restore content")
+        try expect(redone.startPoint == NSPoint(x: 60, y: 88), "text redo did not restore position")
+        try expect(redone.strokeWidth == 5, "text redo did not restore size")
+        try expect(redone.color.isEqual(to: NSColor.systemGreen), "text redo did not restore color")
+        try expect(approximatelyEqual(redone.boundingRect, changedBounds), "redo changed the committed text bounds")
+    }
+
     private static func element(
         _ tool: AnnotationTool,
         from start: NSPoint,
@@ -384,6 +533,49 @@ private enum AnnotationTests {
             }
         }
         return count
+    }
+
+    private static func nonTransparentBounds(in image: NSImage) throws -> NSRect {
+        guard let data = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: data) else {
+            throw AnnotationTestFailure(message: "could not create bitmap for alpha-bound assertion")
+        }
+
+        var minX = bitmap.pixelsWide
+        var minY = bitmap.pixelsHigh
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                if (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.02 {
+                    minX = min(minX, x)
+                    minY = min(minY, y)
+                    maxX = max(maxX, x)
+                    maxY = max(maxY, y)
+                }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return .null }
+
+        let scaleX = image.size.width / CGFloat(bitmap.pixelsWide)
+        let scaleY = image.size.height / CGFloat(bitmap.pixelsHigh)
+        return NSRect(
+            x: CGFloat(minX) * scaleX,
+            y: image.size.height - CGFloat(maxY + 1) * scaleY,
+            width: CGFloat(maxX - minX + 1) * scaleX,
+            height: CGFloat(maxY - minY + 1) * scaleY
+        )
+    }
+
+    private static func approximatelyEqual(_ lhs: CGFloat, _ rhs: CGFloat, tolerance: CGFloat = 0.01) -> Bool {
+        abs(lhs - rhs) <= tolerance
+    }
+
+    private static func approximatelyEqual(_ lhs: NSRect, _ rhs: NSRect, tolerance: CGFloat = 0.01) -> Bool {
+        approximatelyEqual(lhs.origin.x, rhs.origin.x, tolerance: tolerance) &&
+            approximatelyEqual(lhs.origin.y, rhs.origin.y, tolerance: tolerance) &&
+            approximatelyEqual(lhs.size.width, rhs.size.width, tolerance: tolerance) &&
+            approximatelyEqual(lhs.size.height, rhs.size.height, tolerance: tolerance)
     }
 
     private static func test(_ name: String, _ body: () throws -> Void) throws {
