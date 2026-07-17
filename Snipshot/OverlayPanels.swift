@@ -16,8 +16,8 @@ extension OverlayView {
     // MARK: - Panel Lifecycle
     func showAllPanels() {
         removeAllPanels()
-        showInfoPanel()
         showBottomBar()
+        showInfoPanel()
         showSecondaryPanel()
     }
 
@@ -46,6 +46,22 @@ extension OverlayView {
         return selectionRect.origin.y + panelGap
     }
 
+    private func clampedPanelX(preferredX: CGFloat, width: CGFloat) -> CGFloat {
+        let margin: CGFloat = 4
+        guard width <= bounds.width - margin * 2 else { return bounds.minX + margin }
+        return min(max(preferredX, bounds.minX + margin), bounds.maxX - width - margin)
+    }
+
+    private func secondaryPanelOrigin(barFrame: NSRect, size: NSSize) -> NSPoint {
+        let gap: CGFloat = 4
+        let x = clampedPanelX(preferredX: barFrame.maxX - size.width, width: size.width)
+        let aboveY = barFrame.maxY + gap
+        if aboveY + size.height <= bounds.maxY - 4 {
+            return NSPoint(x: x, y: aboveY)
+        }
+        return NSPoint(x: x, y: max(bounds.minY + 4, barFrame.minY - gap - size.height))
+    }
+
     func isPointInPanel(_ point: NSPoint) -> Bool {
         for panel in [bottomBarView, infoPanelView, secondaryPanelView, ocrPanelView] {
             if let p = panel, p.frame.contains(point) { return true }
@@ -71,7 +87,7 @@ extension OverlayView {
         let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         let hPadding: CGFloat = 10
         let panelHeight: CGFloat = 30
-        let y = panelYPosition()
+        var y = panelYPosition()
 
         // Create label first and let it size itself to avoid clipping
         let label = NSTextField(labelWithString: infoText)
@@ -82,7 +98,18 @@ extension OverlayView {
         let labelHeight = ceil(label.frame.height)
 
         let panelWidth = labelWidth + hPadding * 2
-        let panel = makeSolidPanel(frame: NSRect(x: selectionRect.origin.x, y: y, width: panelWidth, height: panelHeight))
+        let x = clampedPanelX(preferredX: selectionRect.origin.x, width: panelWidth)
+        var proposedFrame = NSRect(x: x, y: y, width: panelWidth, height: panelHeight)
+        if let barFrame = bottomBarView?.frame, proposedFrame.intersects(barFrame) {
+            let aboveBarY = barFrame.maxY + 4
+            if aboveBarY + panelHeight <= bounds.maxY - 4 {
+                y = aboveBarY
+            } else {
+                y = max(bounds.minY + 4, barFrame.minY - panelHeight - 4)
+            }
+            proposedFrame.origin.y = y
+        }
+        let panel = makeSolidPanel(frame: proposedFrame)
 
         label.frame = NSRect(x: hPadding, y: (panelHeight - labelHeight) / 2, width: labelWidth, height: labelHeight)
         panel.addSubview(label)
@@ -98,8 +125,8 @@ extension OverlayView {
         let padding: CGFloat = 6
         let dividerW: CGFloat = 12
 
-        let tools = AnnotationTool.allCases
-        let toolCount = CGFloat(tools.count)
+        let toolGroups = AnnotationTool.toolbarGroups
+        let toolCount = CGFloat(toolGroups.count)
         let undoRedoCount: CGFloat = 2
         let ocrChevronW: CGFloat = 14
         let ocrCount: CGFloat = 2
@@ -114,7 +141,8 @@ extension OverlayView {
         let totalWidth = padding + toolsWidth + dividerW + undoRedoWidth + dividerW + ocrWidth + dividerW + scrollCaptureWidth + dividerW + actionsWidth + padding
         let h: CGFloat = 30
 
-        let x = selectionRect.origin.x + selectionRect.width - totalWidth
+        let preferredX = selectionRect.origin.x + selectionRect.width - totalWidth
+        let x = clampedPanelX(preferredX: preferredX, width: totalWidth)
         let y = panelYPosition()
 
         let panel = makeSolidPanel(frame: NSRect(x: x, y: y, width: totalWidth, height: h))
@@ -123,12 +151,31 @@ extension OverlayView {
         var bx = padding
 
         // Tool buttons
-        for tool in tools {
-            let btn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: tool.symbolName, tooltip: tool.displayName)
-            btn.isActive = (annoState.currentTool == tool)
-            btn.onPress = { [weak self] in self?.selectTool(tool) }
+        for group in toolGroups {
+            guard let fallbackTool = group.first else { continue }
+            let displayedTool = group.contains(annoState.currentTool ?? .select) ? (annoState.currentTool ?? fallbackTool) : fallbackTool
+            let tooltip = group.map(\.displayName).joined(separator: " / ")
+            let btn = HoverIconButton(
+                frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize),
+                symbolName: displayedTool.symbolName,
+                tooltip: tooltip,
+                showsMenuIndicator: group.count > 1
+            )
+            btn.isActive = group.contains(annoState.currentTool ?? .select)
+            if group.count == 1 {
+                btn.onPress = { [weak self] in self?.selectTool(fallbackTool) }
+            } else {
+                btn.onPress = { [weak self, weak btn] in
+                    guard let self, let btn else { return }
+                    self.showToolGroupMenu(group, from: btn)
+                }
+                btn.onHover = { [weak self, weak btn] isHovered in
+                    guard isHovered, let self, let btn else { return }
+                    self.showToolGroupMenu(group, from: btn)
+                }
+            }
             panel.addSubview(btn)
-            toolButtons[tool] = btn
+            for tool in group { toolButtons[tool] = btn }
             bx += btnSize + spacing
         }
 
@@ -259,7 +306,8 @@ extension OverlayView {
 
     /// Show property panel for a drawing tool (no element selected)
     private func showToolPropertyPanel(barFrame: NSRect, tool: AnnotationTool) {
-        let showColors = (tool != .mosaic)
+        guard tool != .highlight else { return }
+        let showColors = tool.showsColorControls
         let colors = AnnotationState.availableColors
         let colorSize: CGFloat = 18
         let colorSpacing: CGFloat = 3
@@ -280,11 +328,9 @@ extension OverlayView {
         let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + padding
         let h: CGFloat = 28
 
-        let gap: CGFloat = 4
-        let x = barFrame.maxX - totalWidth
-        let y = barFrame.maxY + gap
+        let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
 
-        let panel = makeSolidPanel(frame: NSRect(x: x, y: y, width: totalWidth, height: h), cornerRadius: 5)
+        let panel = makeSolidPanel(frame: NSRect(origin: origin, size: NSSize(width: totalWidth, height: h)), cornerRadius: 5)
 
         var bx = padding
 
@@ -344,8 +390,12 @@ extension OverlayView {
 
     /// Show property panel for a selected element (single selection) with Delete/Duplicate buttons
     private func showElementPropertyPanel(barFrame: NSRect, element: AnnotationElement) {
+        if element.tool == .highlight {
+            showHighlightElementPanel(barFrame: barFrame)
+            return
+        }
         let elementTool = element.tool
-        let showColors = (elementTool != .mosaic)
+        let showColors = elementTool.showsColorControls
         let colors = AnnotationState.availableColors
         let colorSize: CGFloat = 18
         let colorSpacing: CGFloat = 3
@@ -369,11 +419,9 @@ extension OverlayView {
         let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + dividerW + actionSectionW + padding
         let h: CGFloat = 28
 
-        let gap: CGFloat = 4
-        let x = barFrame.maxX - totalWidth
-        let y = barFrame.maxY + gap
+        let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
 
-        let panel = makeSolidPanel(frame: NSRect(x: x, y: y, width: totalWidth, height: h), cornerRadius: 5)
+        let panel = makeSolidPanel(frame: NSRect(origin: origin, size: NSSize(width: totalWidth, height: h)), cornerRadius: 5)
 
         var bx = padding
 
@@ -469,6 +517,53 @@ extension OverlayView {
         secondaryPanelView = panel
     }
 
+    /// Highlight is a single global spotlight effect, so its selected-state
+    /// panel only offers deletion (duplicating it would stack/replace the mask).
+    private func showHighlightElementPanel(barFrame: NSRect) {
+        let padding: CGFloat = 8
+        let actionBtnSize: CGFloat = 22
+        let h: CGFloat = 28
+        let totalWidth = padding + actionBtnSize + padding
+        let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
+        let panel = makeSolidPanel(frame: NSRect(origin: origin, size: NSSize(width: totalWidth, height: h)), cornerRadius: 5)
+
+        let buttonY = (h - actionBtnSize) / 2
+        let deleteButton = HoverIconButton(
+            frame: NSRect(x: padding, y: buttonY, width: actionBtnSize, height: actionBtnSize),
+            symbolName: "trash",
+            tooltip: "Delete Highlight  \u{232B}",
+            pointSize: 10
+        )
+        deleteButton.onPress = { [weak self] in
+            guard let self else { return }
+            self.annoState.deleteSelected()
+            self.refreshPanels()
+        }
+        panel.addSubview(deleteButton)
+        addSubview(panel)
+        secondaryPanelView = panel
+    }
+
+    // MARK: - Grouped Annotation Tool Menu
+    func showToolGroupMenu(_ tools: [AnnotationTool], from view: NSView) {
+        let menu = NSMenu()
+        for tool in tools {
+            let item = NSMenuItem(title: tool.displayName, action: #selector(groupedToolMenuSelect(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = tool.rawValue
+            item.state = annoState.currentTool == tool ? .on : .off
+            item.image = NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.displayName)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 2), in: view)
+    }
+
+    @objc private func groupedToolMenuSelect(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let tool = AnnotationTool(rawValue: rawValue) else { return }
+        selectTool(tool)
+    }
+
     // MARK: - OCR Dropdown Menu
     func showOCRDropdownMenu(from view: NSView) {
         let menu = NSMenu()
@@ -502,11 +597,9 @@ extension OverlayView {
         let h: CGFloat = 28
         let totalWidth = padding + actionBtnSize + padding
 
-        let gap: CGFloat = 4
-        let x = barFrame.maxX - totalWidth
-        let y = barFrame.maxY + gap
+        let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
 
-        let panel = makeSolidPanel(frame: NSRect(x: x, y: y, width: totalWidth, height: h), cornerRadius: 5)
+        let panel = makeSolidPanel(frame: NSRect(origin: origin, size: NSSize(width: totalWidth, height: h)), cornerRadius: 5)
 
         let abY = (h - actionBtnSize) / 2
         let delBtn = HoverIconButton(frame: NSRect(x: padding, y: abY, width: actionBtnSize, height: actionBtnSize), symbolName: "trash", tooltip: "Delete Selected  \u{232B}", pointSize: 10)

@@ -38,6 +38,7 @@ private class TooltipWindow: NSWindow {
 class HoverIconButton: NSView {
 
     var onPress: (() -> Void)?
+    var onHover: ((Bool) -> Void)?
     var isActive: Bool = false {
         didSet {
             updateTintColor()
@@ -72,7 +73,7 @@ class HoverIconButton: NSView {
     private var tooltipText: String
     private var tooltipWindow: TooltipWindow?
 
-    init(frame: NSRect, symbolName: String, tooltip: String, pointSize: CGFloat = 12) {
+    init(frame: NSRect, symbolName: String, tooltip: String, pointSize: CGFloat = 12, showsMenuIndicator: Bool = false) {
         self.tooltipText = tooltip
         super.init(frame: frame)
 
@@ -90,6 +91,17 @@ class HoverIconButton: NSView {
         iconView.contentTintColor = normalColor
         iconView.autoresizingMask = [.width, .height]
         addSubview(iconView)
+
+        if showsMenuIndicator {
+            let indicator = NSImageView(frame: NSRect(x: bounds.maxX - 8, y: 2, width: 6, height: 6))
+            let indicatorConfig = NSImage.SymbolConfiguration(pointSize: 5, weight: .bold)
+            indicator.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "More tools")?
+                .withSymbolConfiguration(indicatorConfig)
+            indicator.imageScaling = .scaleProportionallyDown
+            indicator.contentTintColor = NSColor(white: 0.35, alpha: 0.8)
+            indicator.autoresizingMask = [.minXMargin, .maxYMargin]
+            addSubview(indicator)
+        }
 
         let area = NSTrackingArea(
             rect: bounds,
@@ -149,7 +161,11 @@ class HoverIconButton: NSView {
         if !isActive { iconView.contentTintColor = hoverColor }
         NSCursor.arrow.set()
         needsDisplay = true
-        showTooltip()
+        if let onHover {
+            onHover(true)
+        } else {
+            showTooltip()
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -158,6 +174,7 @@ class HoverIconButton: NSView {
         if !isDisabled && !isActive { iconView.contentTintColor = normalColor }
         needsDisplay = true
         hideTooltip()
+        onHover?(false)
     }
 
     override func mouseDown(with event: NSEvent) {
