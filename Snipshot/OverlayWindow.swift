@@ -118,6 +118,9 @@ class OverlayView: NSView {
     var colorDots: [NSColor: ColorDot] = [:]
     var undoButton: HoverIconButton?
     var redoButton: HoverIconButton?
+    var groupedToolMenuView: NSView?
+    weak var groupedToolMenuTriggerView: NSView?
+    var groupedToolMenuSuppressedGroupKey: AnnotationTool?
 
     // Annotation dragging
     var annoDragStart: NSPoint = .zero
@@ -1179,6 +1182,12 @@ class OverlayView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
 
+        // Clicking outside the non-modal grouped tool menu dismisses it, while
+        // allowing the underlying screenshot interaction to continue normally.
+        if let menu = groupedToolMenuView, !menu.frame.contains(point) {
+            dismissGroupedToolMenu()
+        }
+
         // Check panels first
         if isPointInPanel(point) { super.mouseDown(with: event); return }
 
@@ -1530,6 +1539,7 @@ class OverlayView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         currentMousePosition = point
+        updateGroupedToolMenuInteraction(at: point)
 
         if isPointInPanel(point) {
             if hoveredHandle != nil { hoveredHandle = nil; needsDisplay = true }

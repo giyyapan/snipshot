@@ -198,6 +198,90 @@ class HoverIconButton: NSView {
     }
 }
 
+// MARK: - Grouped Tool Menu Item
+class GroupedToolMenuItem: NSView {
+    var onPress: (() -> Void)?
+    private var isHovered = false
+    private var isPressed = false
+
+    init(frame: NSRect, tool: AnnotationTool, isSelected: Bool) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+
+        let icon = NSImageView(frame: NSRect(x: 8, y: (frame.height - 16) / 2, width: 16, height: 16))
+        icon.image = NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.displayName)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+        icon.imageScaling = .scaleProportionallyDown
+        icon.contentTintColor = NSColor(white: 0.3, alpha: 1)
+        addSubview(icon)
+
+        let label = NSTextField(labelWithString: tool.displayName)
+        label.font = NSFont.systemFont(ofSize: 12)
+        label.textColor = NSColor(white: 0.25, alpha: 1)
+        label.frame = NSRect(x: 31, y: (frame.height - 16) / 2, width: frame.width - 58, height: 16)
+        addSubview(label)
+
+        if isSelected {
+            let checkmark = NSImageView(frame: NSRect(x: frame.width - 22, y: (frame.height - 14) / 2, width: 14, height: 14))
+            checkmark.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Selected")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold))
+            checkmark.imageScaling = .scaleProportionallyDown
+            checkmark.contentTintColor = .systemBlue
+            addSubview(checkmark)
+        }
+
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(point) ? self : nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isPressed {
+            NSColor.systemBlue.withAlphaComponent(0.18).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+        } else if isHovered {
+            NSColor.systemBlue.withAlphaComponent(0.1).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+        }
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        isPressed = false
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isPressed = false
+        needsDisplay = true
+        let point = convert(event.locationInWindow, from: nil)
+        if bounds.contains(point) { onPress?() }
+    }
+}
+
 // MARK: - SmallButton (for +/- controls)
 class SmallButton: NSView {
     var onPress: (() -> Void)?
