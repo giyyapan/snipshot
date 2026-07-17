@@ -71,6 +71,26 @@ enum AnnotationTool: String, CaseIterable {
     }
 }
 
+// MARK: - Vector Annotation Glow
+struct AnnotationGlowStyle: Equatable {
+    let opacity: CGFloat
+    let blurRadius: CGFloat
+
+    /// Quartz shadows taper beyond their nominal blur radius. Reserving twice
+    /// the radius keeps redraw and selection bounds from clipping that falloff.
+    var drawingOutset: CGFloat { ceil(blurRadius * 2) }
+
+    static func style(for tool: AnnotationTool, strokeWidth: CGFloat) -> AnnotationGlowStyle? {
+        guard [.arrow, .line, .rectangle, .circle].contains(tool) else { return nil }
+
+        let width = min(20, max(1, strokeWidth))
+        return AnnotationGlowStyle(
+            opacity: min(0.40, 0.30 + width * 0.005),
+            blurRadius: min(6, 2.5 + width * 0.2)
+        )
+    }
+}
+
 // MARK: - Annotation Resize Handle
 enum AnnoResizeHandle: Equatable {
     case topLeft, topRight, bottomLeft, bottomRight
@@ -116,8 +136,14 @@ class AnnotationElement {
             let minY = min(startPoint.y, endPoint.y) - padding
             let maxX = max(startPoint.x, endPoint.x) + padding
             let maxY = max(startPoint.y, endPoint.y) + padding
-            return NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-        case .rectangle, .circle, .mosaic, .highlight:
+            let interactionBounds = NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            guard let drawingBounds = AnnotationRenderer.vectorDrawingBounds(for: self) else { return interactionBounds }
+            return interactionBounds.union(drawingBounds)
+        case .rectangle, .circle:
+            let interactionBounds = normalizedRect.insetBy(dx: -max(strokeWidth, 4), dy: -max(strokeWidth, 4))
+            guard let drawingBounds = AnnotationRenderer.vectorDrawingBounds(for: self) else { return interactionBounds }
+            return interactionBounds.union(drawingBounds)
+        case .mosaic, .highlight:
             let r = normalizedRect
             return r.insetBy(dx: -max(strokeWidth, 4), dy: -max(strokeWidth, 4))
         case .text:
@@ -590,14 +616,8 @@ class AnnotationRenderer {
         switch element.tool {
         case .select:
             break  // select is not a drawable element
-        case .arrow:
-            drawArrow(element: element, ctx: context.cgContext, ox: ox, oy: oy)
-        case .line:
-            drawLine(element: element, ox: ox, oy: oy)
-        case .rectangle:
-            drawRectangle(element: element, ctx: context.cgContext, ox: ox, oy: oy)
-        case .circle:
-            drawCircle(element: element, ox: ox, oy: oy)
+        case .arrow, .line, .rectangle, .circle:
+            drawVector(element: element, ctx: context.cgContext, ox: ox, oy: oy)
         case .text:
             drawText(element: element, ox: ox, oy: oy)
         case .marker:
@@ -617,7 +637,53 @@ class AnnotationRenderer {
         }
     }
 
-    private static func drawArrow(element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat) {
+    static func vectorDrawingBounds(for element: AnnotationElement) -> NSRect? {
+        guard let style = AnnotationGlowStyle.style(for: element.tool, strokeWidth: element.strokeWidth),
+              let silhouette = vectorSilhouette(for: element, ox: 0, oy: 0) else { return nil }
+        return silhouette.boundingBoxOfPath.insetBy(dx: -style.drawingOutset, dy: -style.drawingOutset)
+    }
+
+    private static func drawVector(element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat) {
+        guard let silhouette = vectorSilhouette(for: element, ox: ox, oy: oy) else { return }
+        drawGlowingVector(silhouette: silhouette, element: element, ctx: ctx)
+    }
+
+    private static func vectorSilhouette(for element: AnnotationElement, ox: CGFloat, oy: CGFloat) -> CGPath? {
+        switch element.tool {
+        case .arrow:
+            return arrowSilhouette(for: element, ox: ox, oy: oy)
+        case .line:
+            let path = CGMutablePath()
+            path.move(to: NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy))
+            path.addLine(to: NSPoint(x: element.endPoint.x + ox, y: element.endPoint.y + oy))
+            return path.copy(
+                strokingWithWidth: element.strokeWidth,
+                lineCap: .round,
+                lineJoin: .round,
+                miterLimit: 10
+            )
+        case .rectangle:
+            let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
+            return CGPath(rect: rect, transform: nil).copy(
+                strokingWithWidth: element.strokeWidth,
+                lineCap: .butt,
+                lineJoin: .miter,
+                miterLimit: 10
+            )
+        case .circle:
+            let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
+            return CGPath(ellipseIn: rect, transform: nil).copy(
+                strokingWithWidth: element.strokeWidth,
+                lineCap: .butt,
+                lineJoin: .round,
+                miterLimit: 10
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func arrowSilhouette(for element: AnnotationElement, ox: CGFloat, oy: CGFloat) -> CGPath {
         let from = NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy)
         let to = NSPoint(x: element.endPoint.x + ox, y: element.endPoint.y + oy)
 
@@ -649,52 +715,52 @@ class AnnotationRenderer {
         let h1 = NSPoint(x: shaftEnd.x + perpX * headWidth / 2, y: shaftEnd.y + perpY * headWidth / 2)
         let h2 = NSPoint(x: shaftEnd.x - perpX * headWidth / 2, y: shaftEnd.y - perpY * headWidth / 2)
 
-        // Build the full arrow shape as a single path
-        let path = NSBezierPath()
+        // Build the full arrow shape as a single path so shaft and head share
+        // one continuous glow silhouette.
+        let path = CGMutablePath()
         // Start at shaft top-left, go along shaft
         path.move(to: s1)
-        path.line(to: s4)
+        path.addLine(to: s4)
         // Wing out to arrowhead
-        path.line(to: h1)
+        path.addLine(to: h1)
         // Tip
-        path.line(to: to)
+        path.addLine(to: to)
         // Other wing
-        path.line(to: h2)
+        path.addLine(to: h2)
         // Back along shaft
-        path.line(to: s3)
-        path.line(to: s2)
-        path.close()
-
-        element.color.setFill()
-        path.fill()
+        path.addLine(to: s3)
+        path.addLine(to: s2)
+        path.closeSubpath()
+        return path
     }
 
-    private static func drawLine(element: AnnotationElement, ox: CGFloat, oy: CGFloat) {
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy))
-        path.line(to: NSPoint(x: element.endPoint.x + ox, y: element.endPoint.y + oy))
-        path.lineWidth = element.strokeWidth
-        path.lineCapStyle = .round
-        element.color.setStroke()
-        path.stroke()
-    }
+    /// Draw only the shadow outside the vector silhouette, then restore the
+    /// original fill once. Excluding the silhouette from the glow pass keeps
+    /// translucent annotation colors and their alpha unchanged while the
+    /// second pass leaves the visible edge crisp.
+    private static func drawGlowingVector(silhouette: CGPath, element: AnnotationElement, ctx: CGContext) {
+        if let style = AnnotationGlowStyle.style(for: element.tool, strokeWidth: element.strokeWidth) {
+            let glowColor = element.color.withAlphaComponent(style.opacity * element.color.alphaComponent)
+            let clipBounds = ctx.boundingBoxOfClipPath
 
-    private static func drawRectangle(element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat) {
-        let r = element.normalizedRect
-        let rect = NSRect(x: r.origin.x + ox, y: r.origin.y + oy, width: r.width, height: r.height)
+            if !clipBounds.isNull && !clipBounds.isEmpty {
+                ctx.saveGState()
+                ctx.addRect(clipBounds)
+                ctx.addPath(silhouette)
+                ctx.clip(using: .evenOdd)
+                ctx.setShadow(offset: .zero, blur: style.blurRadius, color: glowColor.cgColor)
+                ctx.setFillColor(NSColor.white.cgColor)
+                ctx.addPath(silhouette)
+                ctx.fillPath()
+                ctx.restoreGState()
+            }
+        }
 
-        let path = NSBezierPath(rect: rect)
-        path.lineWidth = element.strokeWidth
-        element.color.setStroke()
-        path.stroke()
-    }
-
-    private static func drawCircle(element: AnnotationElement, ox: CGFloat, oy: CGFloat) {
-        let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
-        let path = NSBezierPath(ovalIn: rect)
-        path.lineWidth = element.strokeWidth
-        element.color.setStroke()
-        path.stroke()
+        ctx.saveGState()
+        ctx.setFillColor(element.color.cgColor)
+        ctx.addPath(silhouette)
+        ctx.fillPath()
+        ctx.restoreGState()
     }
 
     private static func drawHighlight(element: AnnotationElement, ox: CGFloat, oy: CGFloat, selectionSize: NSSize) {
