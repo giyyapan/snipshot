@@ -22,12 +22,16 @@ extension OverlayView {
     }
 
     func removeAllPanels() {
+        dismissGroupedToolMenu()
+        // Drop button identity mappings before removing their tracking areas so
+        // a synthetic mouse-exit from an old button cannot clear suppression
+        // that belongs to the rebuilt toolbar button under the same pointer.
+        toolButtons.removeAll()
         infoPanelView?.removeFromSuperview(); infoPanelView = nil
         bottomBarView?.removeFromSuperview(); bottomBarView = nil
         secondaryPanelView?.removeFromSuperview(); secondaryPanelView = nil
         textField?.removeFromSuperview(); textField = nil
         ocrPanelView?.removeFromSuperview(); ocrPanelView = nil
-        toolButtons.removeAll()
         colorDots.removeAll()
         undoButton = nil
         redoButton = nil
@@ -63,7 +67,7 @@ extension OverlayView {
     }
 
     func isPointInPanel(_ point: NSPoint) -> Bool {
-        for panel in [bottomBarView, infoPanelView, secondaryPanelView, ocrPanelView] {
+        for panel in [bottomBarView, infoPanelView, secondaryPanelView, ocrPanelView, groupedToolMenuView] {
             if let p = panel, p.frame.contains(point) { return true }
         }
         return false
@@ -165,13 +169,28 @@ extension OverlayView {
             if group.count == 1 {
                 btn.onPress = { [weak self] in self?.selectTool(fallbackTool) }
             } else {
-                btn.onPress = { [weak self, weak btn] in
-                    guard let self, let btn else { return }
-                    self.showToolGroupMenu(group, from: btn)
+                btn.onPress = { [weak self] in
+                    guard let self else { return }
+                    self.groupedToolMenuSuppressedGroupKey = fallbackTool
+                    self.dismissGroupedToolMenu()
+                    self.selectTool(displayedTool)
+                    // `selectTool` rebuilds the toolbar. Re-assert suppression
+                    // after the rebuild in case removing the old tracking area
+                    // emitted mouse-exit while the pointer never actually left.
+                    self.groupedToolMenuSuppressedGroupKey = fallbackTool
+                    self.dismissGroupedToolMenu()
                 }
                 btn.onHover = { [weak self, weak btn] isHovered in
-                    guard isHovered, let self, let btn else { return }
-                    self.showToolGroupMenu(group, from: btn)
+                    guard let self else { return }
+                    if isHovered {
+                        guard self.groupedToolMenuSuppressedGroupKey != fallbackTool,
+                              let btn else { return }
+                        self.showToolGroupMenu(group, from: btn)
+                    } else if self.groupedToolMenuSuppressedGroupKey == fallbackTool,
+                              let btn,
+                              self.toolButtons[fallbackTool] === btn {
+                        self.groupedToolMenuSuppressedGroupKey = nil
+                    }
                 }
             }
             panel.addSubview(btn)
@@ -546,39 +565,69 @@ extension OverlayView {
 
     // MARK: - Grouped Annotation Tool Menu
     func showToolGroupMenu(_ tools: [AnnotationTool], from view: NSView) {
-        let menu = NSMenu()
-        let rememberedTool = annoState.rememberedTool(in: tools)
-        for tool in tools {
-            let item = NSMenuItem(title: tool.displayName, action: #selector(groupedToolMenuSelect(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = tool.rawValue
-            item.state = rememberedTool == tool ? .on : .off
-            item.image = NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.displayName)
-            menu.addItem(item)
+        dismissGroupedToolMenu()
+
+        let menuWidth: CGFloat = 154
+        let rowHeight: CGFloat = 30
+        let padding: CGFloat = 4
+        let menuHeight = padding * 2 + rowHeight * CGFloat(tools.count)
+        let triggerFrame = view.convert(view.bounds, to: self)
+        let gap: CGFloat = 6
+        let menuX = clampedPanelX(preferredX: triggerFrame.midX - menuWidth / 2, width: menuWidth)
+        let aboveY = triggerFrame.maxY + gap
+        let menuY: CGFloat
+        if aboveY + menuHeight <= bounds.maxY - 4 {
+            menuY = aboveY
+        } else {
+            menuY = max(bounds.minY + 4, triggerFrame.minY - gap - menuHeight)
         }
 
-        // NSMenu anchors its top edge at the supplied point and extends down.
-        // Include the menu height when opening upward so it clears the button;
-        // near the top screen edge, put the whole menu below the button instead.
-        let gap: CGFloat = 6
-        let menuSize = menu.size
-        let menuX = view.bounds.midX - menuSize.width / 2
-        var menuY = view.bounds.maxY + gap + menuSize.height
-        if let window = view.window {
-            let buttonTop = window.convertPoint(toScreen: view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.maxY), to: nil))
-            let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-            let availableAbove = visibleFrame.maxY - buttonTop.y
-            if availableAbove < menuSize.height + gap {
-                menuY = view.bounds.minY - gap
+        let menu = makeSolidPanel(
+            frame: NSRect(x: menuX, y: menuY, width: menuWidth, height: menuHeight),
+            cornerRadius: 6
+        )
+        let rememberedTool = annoState.rememberedTool(in: tools)
+        for (index, tool) in tools.enumerated() {
+            let rowY = padding + CGFloat(tools.count - 1 - index) * rowHeight
+            let item = GroupedToolMenuItem(
+                frame: NSRect(x: padding, y: rowY, width: menuWidth - padding * 2, height: rowHeight),
+                tool: tool,
+                isSelected: rememberedTool == tool
+            )
+            item.onPress = { [weak self] in
+                guard let self else { return }
+                self.groupedToolMenuSuppressedGroupKey = nil
+                self.selectTool(tool)
             }
+            menu.addSubview(item)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: menuX, y: menuY), in: view)
+        addSubview(menu)
+        groupedToolMenuView = menu
+        groupedToolMenuTriggerView = view
     }
 
-    @objc private func groupedToolMenuSelect(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let tool = AnnotationTool(rawValue: rawValue) else { return }
-        selectTool(tool)
+    func dismissGroupedToolMenu() {
+        groupedToolMenuView?.removeFromSuperview()
+        groupedToolMenuView = nil
+        groupedToolMenuTriggerView = nil
+    }
+
+    func updateGroupedToolMenuInteraction(at point: NSPoint) {
+        if let groupKey = groupedToolMenuSuppressedGroupKey,
+           let button = toolButtons[groupKey] {
+            let buttonFrame = button.convert(button.bounds, to: self)
+            if !buttonFrame.contains(point) {
+                groupedToolMenuSuppressedGroupKey = nil
+            }
+        }
+
+        guard let menu = groupedToolMenuView,
+              let trigger = groupedToolMenuTriggerView else { return }
+        let triggerFrame = trigger.convert(trigger.bounds, to: self)
+        let hoverRegion = menu.frame.union(triggerFrame).insetBy(dx: -2, dy: -2)
+        if !hoverRegion.contains(point) {
+            dismissGroupedToolMenu()
+        }
     }
 
     // MARK: - OCR Dropdown Menu
