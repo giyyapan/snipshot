@@ -81,6 +81,7 @@ swiftc \
     "$PROJECT_DIR/Snipshot/main.swift" \
     "$PROJECT_DIR/Snipshot/AppDelegate.swift" \
     "$PROJECT_DIR/Snipshot/PinRecoveryState.swift" \
+    "$PROJECT_DIR/Snipshot/PinFocusFallback.swift" \
     "$PROJECT_DIR/Sources/ImageOutputCore/ImageOutput.swift" \
     "$PROJECT_DIR/Sources/SecureInputCore/SecureInputStatus.swift" \
     "$PROJECT_DIR/Snipshot/SecureInputRecovery.swift" \
