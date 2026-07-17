@@ -566,15 +566,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // MARK: - Pin
     private func pinImage(_ image: NSImage, at origin: NSPoint) {
         pinRecoveryState.recordPin()
-        let pinWindow = PinWindow(image: image, origin: origin) { [weak self] unpinnedImage, unpinnedOrigin in
-            self?.pinRecoveryState.recordUnpin(unpinnedImage, at: unpinnedOrigin)
-            logMessage("Remembered most recently unpinned image and position.")
+        let pinWindow = PinWindow(image: image, origin: origin) { [weak self] window, unpinnedImage, unpinnedOrigin in
+            self?.handlePinUnpin(window, image: unpinnedImage, origin: unpinnedOrigin)
         }
         pinWindow.makeKeyAndOrderFront(nil)
         pinWindows.append(pinWindow)
         pinWindows.removeAll { !$0.isVisible }
         // Activate the app so the pin window becomes truly key and can receive Esc
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func handlePinUnpin(_ closingWindow: PinWindow, image: NSImage, origin: NSPoint) {
+        pinRecoveryState.recordUnpin(image, at: origin)
+        logMessage("Remembered most recently unpinned image and position.")
+
+        let managedPinIDs = Set(pinWindows.map(ObjectIdentifier.init))
+        let orderedWindows = NSApp.orderedWindows.map { window in
+            PinFocusWindowSnapshot(
+                id: ObjectIdentifier(window),
+                isManagedPin: managedPinIDs.contains(ObjectIdentifier(window)),
+                isVisible: window.isVisible
+            )
+        }
+        let nextID = PinFocusFallback.nextCandidate(
+            in: orderedWindows,
+            closingID: ObjectIdentifier(closingWindow)
+        )
+        let nextWindow = nextID.flatMap { candidateID in
+            pinWindows.first { ObjectIdentifier($0) == candidateID }
+        }
+
+        pinWindows.removeAll { $0 === closingWindow || !$0.isVisible }
+
+        DispatchQueue.main.async { [weak self, weak nextWindow] in
+            guard let self,
+                  let nextWindow,
+                  nextWindow.isVisible,
+                  self.pinWindows.contains(where: { $0 === nextWindow }) else { return }
+            nextWindow.makeKeyAndOrderFront(nil)
+        }
     }
 
     @objc func pinFromRecentUnpinOrClipboard() {
