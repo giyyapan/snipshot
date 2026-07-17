@@ -16,6 +16,11 @@ private enum AnnotationTests {
         try test("new elements participate in move, duplicate, undo, and redo", testStateOperations)
         try test("line and circle render as unfilled strokes", testLineAndCircleRendering)
         try test("highlight renders a stronger outside dim and lighter focus", testHighlightRendering)
+        try test("glow style is shared, scoped, and scales with stroke width", testGlowStyleAndBounds)
+        try test("all four vector tools render a restrained edge glow", testVectorGlowRendering)
+        try test("glow preserves the sharp vector body color and alpha", testGlowPreservesBodyColorAndAlpha)
+        try test("overlay and export share rendering without exporting selection UI", testOverlayAndExportRendering)
+        try test("vector glow clips safely at screenshot edges", testGlowAtScreenshotEdges)
 
         print("AnnotationTests: \(testCount) tests passed")
     }
@@ -169,6 +174,119 @@ private enum AnnotationTests {
         try expect(inside - outside > 0.2, "Highlight did not create enough focus contrast")
     }
 
+    private static func testGlowStyleAndBounds() throws {
+        let vectorTools: [AnnotationTool] = [.arrow, .line, .rectangle, .circle]
+        for tool in vectorTools {
+            try expect(AnnotationGlowStyle.style(for: tool, strokeWidth: 3) != nil, "\(tool) did not opt into the shared glow style")
+        }
+
+        for tool in [AnnotationTool.select, .text, .marker, .mosaic, .highlight] {
+            try expect(AnnotationGlowStyle.style(for: tool, strokeWidth: 3) == nil, "\(tool) unexpectedly opted into vector glow")
+        }
+
+        let thin = try requireGlowStyle(for: .line, strokeWidth: 1)
+        let thick = try requireGlowStyle(for: .line, strokeWidth: 12)
+        try expect(thick.blurRadius > thin.blurRadius, "glow radius did not scale with stroke width")
+        try expect(thick.opacity > thin.opacity, "glow intensity did not scale with stroke width")
+        try expect(thick.opacity <= 0.40, "glow opacity is no longer restrained")
+
+        let rectangle = element(.rectangle, from: NSPoint(x: 20, y: 20), to: NSPoint(x: 80, y: 60), strokeWidth: 4)
+        let rectangleStyle = try requireGlowStyle(for: .rectangle, strokeWidth: rectangle.strokeWidth)
+        let requiredOutset = rectangle.strokeWidth / 2 + rectangleStyle.drawingOutset
+        try expect(rectangle.boundingRect.minX <= rectangle.normalizedRect.minX - requiredOutset, "rectangle bounds clip the glow on the left")
+        try expect(rectangle.boundingRect.maxY >= rectangle.normalizedRect.maxY + requiredOutset, "rectangle bounds clip the glow on top")
+
+        let shortThickArrow = element(.arrow, from: NSPoint(x: 50, y: 50), to: NSPoint(x: 55, y: 50), strokeWidth: 20)
+        guard let arrowDrawingBounds = AnnotationRenderer.vectorDrawingBounds(for: shortThickArrow) else {
+            throw AnnotationTestFailure(message: "could not calculate Arrow drawing bounds")
+        }
+        try expect(shortThickArrow.boundingRect.contains(arrowDrawingBounds), "short Arrow bounds clip its head or glow")
+
+        let mosaic = element(.mosaic, from: NSPoint(x: 20, y: 20), to: NSPoint(x: 80, y: 60), strokeWidth: 4)
+        try expect(mosaic.boundingRect == mosaic.normalizedRect.insetBy(dx: -4, dy: -4), "non-glowing Mosaic bounds changed")
+    }
+
+    private static func testVectorGlowRendering() throws {
+        let size = NSSize(width: 120, height: 100)
+        let samples: [(AnnotationTool, NSPoint, NSPoint, NSPoint, NSPoint)] = [
+            (.arrow, NSPoint(x: 25, y: 50), NSPoint(x: 95, y: 50), NSPoint(x: 55, y: 50), NSPoint(x: 55, y: 54)),
+            (.line, NSPoint(x: 25, y: 50), NSPoint(x: 95, y: 50), NSPoint(x: 55, y: 50), NSPoint(x: 55, y: 54)),
+            (.rectangle, NSPoint(x: 25, y: 20), NSPoint(x: 95, y: 80), NSPoint(x: 55, y: 20), NSPoint(x: 55, y: 16)),
+            (.circle, NSPoint(x: 25, y: 20), NSPoint(x: 95, y: 80), NSPoint(x: 60, y: 80), NSPoint(x: 60, y: 84))
+        ]
+
+        for (tool, start, end, bodyPoint, glowPoint) in samples {
+            let annotation = element(tool, from: start, to: end, strokeWidth: 4)
+            annotation.color = .systemRed
+            let rendered = renderExport(annotation, size: size)
+            let body = try color(in: rendered, at: bodyPoint)
+            let glow = try color(in: rendered, at: glowPoint)
+            let far = try color(in: rendered, at: NSPoint(x: 5, y: 5))
+
+            try expect(body.alphaComponent > 0.9, "\(tool) body was not rendered sharply")
+            try expect(glow.alphaComponent > 0.005, "\(tool) edge glow was not visible")
+            try expect(glow.alphaComponent < 0.30, "\(tool) edge glow is too heavy")
+            try expect(far.alphaComponent < 0.001, "\(tool) glow polluted a distant pixel")
+        }
+    }
+
+    private static func testGlowPreservesBodyColorAndAlpha() throws {
+        let size = NSSize(width: 100, height: 80)
+        let annotation = element(.line, from: NSPoint(x: 15, y: 40), to: NSPoint(x: 85, y: 40), strokeWidth: 6)
+        annotation.color = NSColor(deviceRed: 0.18, green: 0.72, blue: 0.36, alpha: 0.62)
+
+        let rendered = renderExport(annotation, size: size)
+        let body = try color(in: rendered, at: NSPoint(x: 50, y: 40))
+        let colorReference = makeSolidImage(size: size, color: annotation.color)
+        let expected = try color(in: colorReference, at: NSPoint(x: 50, y: 40))
+
+        try expect(abs(body.redComponent - expected.redComponent) < 0.02, "glow changed the body red component: \(body.redComponent) vs \(expected.redComponent)")
+        try expect(abs(body.greenComponent - expected.greenComponent) < 0.02, "glow changed the body green component: \(body.greenComponent) vs \(expected.greenComponent)")
+        try expect(abs(body.blueComponent - expected.blueComponent) < 0.02, "glow changed the body blue component: \(body.blueComponent) vs \(expected.blueComponent)")
+        try expect(abs(body.alphaComponent - expected.alphaComponent) < 0.02, "glow changed the body alpha: \(body.alphaComponent) vs \(expected.alphaComponent)")
+    }
+
+    private static func testOverlayAndExportRendering() throws {
+        let size = NSSize(width: 110, height: 90)
+        let annotation = element(.rectangle, from: NSPoint(x: 25, y: 20), to: NSPoint(x: 85, y: 70), strokeWidth: 4)
+        annotation.color = .systemRed
+
+        let overlay = renderDirect(annotation, size: size, isSelected: false)
+        let exported = renderExport(annotation, size: size)
+        for point in [NSPoint(x: 55, y: 20), NSPoint(x: 55, y: 15), NSPoint(x: 5, y: 5)] {
+            let overlayColor = try color(in: overlay, at: point)
+            let exportColor = try color(in: exported, at: point)
+            try expect(colorsMatch(overlayColor, exportColor, tolerance: 0.01), "overlay/export rendering diverged at \(point)")
+        }
+
+        let selectedOverlay = renderDirect(annotation, size: size, isSelected: true)
+        let overlaySelectionPixels = try countSelectionBluePixels(in: selectedOverlay)
+        let exportSelectionPixels = try countSelectionBluePixels(in: exported)
+        try expect(overlaySelectionPixels > 0, "selected overlay did not render its editing UI")
+        try expect(exportSelectionPixels == 0, "selection box or resize handles leaked into export")
+    }
+
+    private static func testGlowAtScreenshotEdges() throws {
+        let size = NSSize(width: 50, height: 40)
+        let edgeElements = [
+            element(.arrow, from: NSPoint(x: 0, y: 1), to: NSPoint(x: 35, y: 1), strokeWidth: 4),
+            element(.line, from: NSPoint(x: -5, y: 20), to: NSPoint(x: 30, y: 20), strokeWidth: 4),
+            element(.rectangle, from: NSPoint(x: -4, y: -3), to: NSPoint(x: 30, y: 25), strokeWidth: 4),
+            element(.circle, from: NSPoint(x: 25, y: 15), to: NSPoint(x: 54, y: 43), strokeWidth: 4)
+        ]
+
+        let transparent = makeSolidImage(size: size, color: .clear)
+        let rendered = AnnotationRenderer.renderAnnotationsOntoImage(
+            baseImage: transparent,
+            annotations: edgeElements,
+            selectionRect: NSRect(origin: .zero, size: size),
+            screenshot: transparent
+        )
+        try expect(rendered.size == size, "edge rendering changed the output dimensions")
+        let visiblePixels = try countVisiblePixels(in: rendered)
+        try expect(visiblePixels > 0, "edge-clipped vectors did not render")
+    }
+
     private static func element(
         _ tool: AnnotationTool,
         from start: NSPoint,
@@ -187,6 +305,33 @@ private enum AnnotationTests {
         return image
     }
 
+    private static func renderExport(_ element: AnnotationElement, size: NSSize) -> NSImage {
+        let transparent = makeSolidImage(size: size, color: .clear)
+        return AnnotationRenderer.renderAnnotationsOntoImage(
+            baseImage: transparent,
+            annotations: [element],
+            selectionRect: NSRect(origin: .zero, size: size),
+            screenshot: transparent
+        )
+    }
+
+    private static func renderDirect(_ element: AnnotationElement, size: NSSize, isSelected: Bool) -> NSImage {
+        let image = makeSolidImage(size: size, color: .clear)
+        image.lockFocus()
+        if let context = NSGraphicsContext.current {
+            AnnotationRenderer.draw(
+                element: element,
+                in: context,
+                selectionOrigin: .zero,
+                isSelected: isSelected,
+                screenshot: image,
+                selectionRect: NSRect(origin: .zero, size: size)
+            )
+        }
+        image.unlockFocus()
+        return image
+    }
+
     private static func color(in image: NSImage, at point: NSPoint) throws -> NSColor {
         guard let data = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: data) else {
@@ -198,6 +343,47 @@ private enum AnnotationTests {
             throw AnnotationTestFailure(message: "could not sample rendered pixel")
         }
         return sampled
+    }
+
+    private static func requireGlowStyle(for tool: AnnotationTool, strokeWidth: CGFloat) throws -> AnnotationGlowStyle {
+        guard let style = AnnotationGlowStyle.style(for: tool, strokeWidth: strokeWidth) else {
+            throw AnnotationTestFailure(message: "missing glow style for \(tool)")
+        }
+        return style
+    }
+
+    private static func colorsMatch(_ lhs: NSColor, _ rhs: NSColor, tolerance: CGFloat) -> Bool {
+        abs(lhs.redComponent - rhs.redComponent) <= tolerance &&
+        abs(lhs.greenComponent - rhs.greenComponent) <= tolerance &&
+        abs(lhs.blueComponent - rhs.blueComponent) <= tolerance &&
+        abs(lhs.alphaComponent - rhs.alphaComponent) <= tolerance
+    }
+
+    private static func countSelectionBluePixels(in image: NSImage) throws -> Int {
+        try countPixels(in: image) { color in
+            color.blueComponent > 0.55 && color.blueComponent > color.redComponent * 1.5 && color.alphaComponent > 0.25
+        }
+    }
+
+    private static func countVisiblePixels(in image: NSImage) throws -> Int {
+        try countPixels(in: image) { $0.alphaComponent > 0.01 }
+    }
+
+    private static func countPixels(in image: NSImage, matching predicate: (NSColor) -> Bool) throws -> Int {
+        guard let data = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: data) else {
+            throw AnnotationTestFailure(message: "could not create bitmap for pixel count")
+        }
+
+        var count = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), predicate(color) {
+                    count += 1
+                }
+            }
+        }
+        return count
     }
 
     private static func test(_ name: String, _ body: () throws -> Void) throws {
