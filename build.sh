@@ -80,6 +80,7 @@ swiftc \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     "$PROJECT_DIR/Snipshot/main.swift" \
     "$PROJECT_DIR/Snipshot/AppDelegate.swift" \
+    "$PROJECT_DIR/Snipshot/PinRecoveryState.swift" \
     "$PROJECT_DIR/Sources/ImageOutputCore/ImageOutput.swift" \
     "$PROJECT_DIR/Sources/SecureInputCore/SecureInputStatus.swift" \
     "$PROJECT_DIR/Snipshot/SecureInputRecovery.swift" \

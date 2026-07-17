@@ -3,6 +3,8 @@ import Cocoa
 class PinWindow: NSWindow {
 
     let pinnedImage: NSImage
+    private let onUnpin: (NSImage) -> Void
+    private var didUnpin = false
     var currentScale: CGFloat = 1.0
     let baseSize: NSSize
 
@@ -16,8 +18,9 @@ class PinWindow: NSWindow {
     let minScale: CGFloat = 0.1
     let maxScale: CGFloat = 5.0
 
-    init(image: NSImage, origin: NSPoint) {
+    init(image: NSImage, origin: NSPoint, onUnpin: @escaping (NSImage) -> Void = { _ in }) {
         self.pinnedImage = image
+        self.onUnpin = onUnpin
         self.baseSize = image.size
 
         let windowRect = NSRect(
@@ -74,7 +77,7 @@ class PinWindow: NSWindow {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         if event.keyCode == 53 || event.keyCode == 51 { // Escape or Backspace - unpin
-            close()
+            unpin()
         } else if event.keyCode == 8 && flags.contains(.command) { // Cmd+C - copy image
             copyImageToClipboard()
         } else if event.keyCode == 33 { // [ — decrease opacity
@@ -84,6 +87,13 @@ class PinWindow: NSWindow {
         } else {
             super.keyDown(with: event)
         }
+    }
+
+    func unpin() {
+        guard !didUnpin else { return }
+        didUnpin = true
+        onUnpin(pinnedImage)
+        close()
     }
 
     private func adjustOpacity(by delta: CGFloat) {
@@ -296,7 +306,7 @@ class PinContentView: NSView {
                 ? true
                 : UserDefaults.standard.bool(forKey: key)
             if enabled {
-                parentWindow?.close()
+                parentWindow?.unpin()
                 return
             }
         }
