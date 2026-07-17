@@ -368,7 +368,7 @@ class OverlayView: NSView {
     }
 
     func cycleToolGroup(_ group: [AnnotationTool]) {
-        selectTool(AnnotationTool.cycledTool(in: group, current: annoState.currentTool))
+        selectTool(annoState.toolForGroupShortcut(group))
     }
 
     /// Switch to select tool and select the given element (shows element properties)

@@ -31,6 +31,20 @@ private enum AnnotationTests {
         try expect(AnnotationTool.cycledTool(in: [.arrow, .line], current: .line) == .arrow, "A did not wrap to Arrow")
         try expect(AnnotationTool.cycledTool(in: [.rectangle, .circle], current: .text) == .rectangle, "R did not start at Rectangle")
         try expect(AnnotationTool.cycledTool(in: [.mosaic, .highlight], current: .mosaic) == .highlight, "M did not advance to Highlight")
+
+        let state = AnnotationState()
+        state.currentTool = .arrow
+        try expect(state.toolForGroupShortcut([.arrow, .line]) == .line, "active Arrow did not cycle to Line")
+        state.currentTool = .line
+        state.currentTool = .select
+        try expect(state.rememberedTool(in: [.arrow, .line]) == .line, "Select reset the visible group member to Arrow")
+        try expect(state.toolForGroupShortcut([.arrow, .line]) == .line, "A did not restore remembered Line from Select")
+        state.currentTool = .circle
+        state.currentTool = .select
+        try expect(state.rememberedTool(in: [.rectangle, .circle]) == .circle, "Select reset the visible group member to Rectangle")
+        state.currentTool = .highlight
+        state.currentTool = .select
+        try expect(state.rememberedTool(in: [.mosaic, .highlight]) == .highlight, "Select reset the visible group member to Mosaic")
     }
 
     private static func testLineGeometry() throws {
