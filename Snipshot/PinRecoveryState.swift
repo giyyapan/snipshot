@@ -1,20 +1,27 @@
-enum PinImageSelection<Value> {
-    case recovered(Value)
-    case fallback(Value)
+struct PinRecoveryRecord<Value, Position> {
+    let value: Value
+    let position: Position
 }
 
-struct PinRecoveryState<Value> {
-    private var mostRecentUnpinned: Value?
+enum PinImageSelection<Value, Position> {
+    case recovered(PinRecoveryRecord<Value, Position>)
+    case fallback(PinRecoveryRecord<Value, Position>)
+}
 
-    mutating func recordUnpin(_ value: Value) {
-        mostRecentUnpinned = value
+struct PinRecoveryState<Value, Position> {
+    private var mostRecentUnpinned: PinRecoveryRecord<Value, Position>?
+
+    mutating func recordUnpin(_ value: Value, at position: Position) {
+        mostRecentUnpinned = PinRecoveryRecord(value: value, position: position)
     }
 
     mutating func recordPin() {
         mostRecentUnpinned = nil
     }
 
-    mutating func selectImage(fallback: () -> Value?) -> PinImageSelection<Value>? {
+    mutating func selectImage(
+        fallback: () -> PinRecoveryRecord<Value, Position>?
+    ) -> PinImageSelection<Value, Position>? {
         if let recovered = mostRecentUnpinned {
             mostRecentUnpinned = nil
             return .recovered(recovered)

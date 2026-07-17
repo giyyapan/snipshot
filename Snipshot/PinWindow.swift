@@ -3,7 +3,7 @@ import Cocoa
 class PinWindow: NSWindow {
 
     let pinnedImage: NSImage
-    private let onUnpin: (NSImage) -> Void
+    private let onUnpin: (NSImage, NSPoint) -> Void
     private var didUnpin = false
     var currentScale: CGFloat = 1.0
     let baseSize: NSSize
@@ -18,7 +18,11 @@ class PinWindow: NSWindow {
     let minScale: CGFloat = 0.1
     let maxScale: CGFloat = 5.0
 
-    init(image: NSImage, origin: NSPoint, onUnpin: @escaping (NSImage) -> Void = { _ in }) {
+    init(
+        image: NSImage,
+        origin: NSPoint,
+        onUnpin: @escaping (NSImage, NSPoint) -> Void = { _, _ in }
+    ) {
         self.pinnedImage = image
         self.onUnpin = onUnpin
         self.baseSize = image.size
@@ -92,7 +96,7 @@ class PinWindow: NSWindow {
     func unpin() {
         guard !didUnpin else { return }
         didUnpin = true
-        onUnpin(pinnedImage)
+        onUnpin(pinnedImage, frame.origin)
         close()
     }
 
