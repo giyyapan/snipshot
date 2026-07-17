@@ -4,19 +4,42 @@ import Cocoa
 enum AnnotationTool: String, CaseIterable {
     case select
     case arrow
+    case line
     case rectangle
+    case circle
     case text
     case marker
     case mosaic
+    case highlight
+
+    /// Top-level toolbar slots. Related tools share one slot and are selected
+    /// from the slot's hover menu or by repeatedly pressing its shortcut.
+    static let toolbarGroups: [[AnnotationTool]] = [
+        [.select],
+        [.arrow, .line],
+        [.rectangle, .circle],
+        [.text],
+        [.marker],
+        [.mosaic, .highlight]
+    ]
+
+    static func cycledTool(in group: [AnnotationTool], current: AnnotationTool?) -> AnnotationTool {
+        guard !group.isEmpty else { return .select }
+        guard let current, let index = group.firstIndex(of: current) else { return group[0] }
+        return group[(index + 1) % group.count]
+    }
 
     var symbolName: String {
         switch self {
         case .select:    return "cursorarrow"
         case .arrow:     return "arrow.up.right"
+        case .line:      return "line.diagonal"
         case .rectangle: return "rectangle"
+        case .circle:    return "circle"
         case .text:      return "textformat"
         case .marker:    return "1.circle"
         case .mosaic:    return "mosaic"
+        case .highlight: return "viewfinder"
         }
     }
 
@@ -24,16 +47,27 @@ enum AnnotationTool: String, CaseIterable {
         switch self {
         case .select:    return "Select  S"
         case .arrow:     return "Arrow  A"
+        case .line:      return "Line  A"
         case .rectangle: return "Rectangle  R"
+        case .circle:    return "Circle  R"
         case .text:      return "Text  T"
         case .marker:    return "Marker  C"
         case .mosaic:    return "Mosaic  M"
+        case .highlight: return "Highlight  M"
         }
     }
 
     /// Whether this tool is a drawing tool (not select)
     var isDrawingTool: Bool {
         return self != .select
+    }
+
+    var showsColorControls: Bool {
+        return self != .select && self != .mosaic && self != .highlight
+    }
+
+    var usesStrokeWidth: Bool {
+        return self != .select && self != .highlight
     }
 }
 
@@ -76,14 +110,14 @@ class AnnotationElement {
         switch tool {
         case .select:
             return .zero
-        case .arrow:
+        case .arrow, .line:
             let padding = max(strokeWidth * 2, 10)
             let minX = min(startPoint.x, endPoint.x) - padding
             let minY = min(startPoint.y, endPoint.y) - padding
             let maxX = max(startPoint.x, endPoint.x) + padding
             let maxY = max(startPoint.y, endPoint.y) + padding
             return NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-        case .rectangle, .mosaic:
+        case .rectangle, .circle, .mosaic, .highlight:
             let r = normalizedRect
             return r.insetBy(dx: -max(strokeWidth, 4), dy: -max(strokeWidth, 4))
         case .text:
@@ -115,13 +149,15 @@ class AnnotationElement {
         switch tool {
         case .select:
             return false
-        case .arrow:
+        case .arrow, .line:
             return distanceToLine(point: point, from: startPoint, to: endPoint) < max(strokeWidth * 2, 8)
         case .rectangle:
             let r = normalizedRect
             let outer = r.insetBy(dx: -max(strokeWidth, 4), dy: -max(strokeWidth, 4))
             let inner = r.insetBy(dx: max(strokeWidth, 4), dy: max(strokeWidth, 4))
             return outer.contains(point) && (inner.width <= 0 || inner.height <= 0 || !inner.contains(point))
+        case .circle:
+            return hitTestEllipseBorder(point: point)
         case .text:
             return textBoundingRect.contains(point)
         case .marker:
@@ -130,6 +166,8 @@ class AnnotationElement {
             let dy = point.y - startPoint.y
             return (dx * dx + dy * dy) <= (radius * radius)
         case .mosaic:
+            return normalizedRect.contains(point)
+        case .highlight:
             return normalizedRect.contains(point)
         }
     }
@@ -141,13 +179,13 @@ class AnnotationElement {
         switch tool {
         case .select:
             return nil
-        case .arrow:
-            // Arrow has start and end point handles
+        case .arrow, .line:
+            // Arrow and line have start and end point handles
             if distance(point, startPoint) < hs { return .startPoint }
             if distance(point, endPoint) < hs { return .endPoint }
             return nil
 
-        case .rectangle, .mosaic:
+        case .rectangle, .circle, .mosaic, .highlight:
             let r = normalizedRect
             let corners: [(AnnoResizeHandle, NSPoint)] = [
                 (.topLeft,     NSPoint(x: r.minX, y: r.maxY)),
@@ -200,6 +238,23 @@ class AnnotationElement {
         endPoint.y += dy
     }
 
+    var hasRenderableGeometry: Bool {
+        let dx = abs(endPoint.x - startPoint.x)
+        let dy = abs(endPoint.y - startPoint.y)
+        switch tool {
+        case .select:
+            return false
+        case .line:
+            return hypot(dx, dy) > 3
+        case .circle, .highlight:
+            return dx > 3 && dy > 3
+        case .arrow, .rectangle, .mosaic:
+            return dx > 3 || dy > 3
+        case .text, .marker:
+            return true
+        }
+    }
+
     private func distance(_ a: NSPoint, _ b: NSPoint) -> CGFloat {
         let dx = a.x - b.x
         let dy = a.y - b.y
@@ -222,6 +277,28 @@ class AnnotationElement {
         let px = point.x - projX
         let py = point.y - projY
         return sqrt(px * px + py * py)
+    }
+
+    private func hitTestEllipseBorder(point: NSPoint) -> Bool {
+        let rect = normalizedRect
+        let radiusX = rect.width / 2
+        let radiusY = rect.height / 2
+        guard radiusX > 0.001, radiusY > 0.001 else { return false }
+
+        let centerX = rect.midX
+        let centerY = rect.midY
+        let tolerance = max(strokeWidth, 4)
+
+        let outerX = radiusX + tolerance
+        let outerY = radiusY + tolerance
+        let normalizedOuter = pow((point.x - centerX) / outerX, 2) + pow((point.y - centerY) / outerY, 2)
+        guard normalizedOuter <= 1 else { return false }
+
+        let innerX = radiusX - tolerance
+        let innerY = radiusY - tolerance
+        guard innerX > 0, innerY > 0 else { return true }
+        let normalizedInner = pow((point.x - centerX) / innerX, 2) + pow((point.y - centerY) / innerY, 2)
+        return normalizedInner >= 1
     }
 }
 
@@ -254,7 +331,9 @@ class AnnotationState {
 
     var strokeWidths: [AnnotationTool: CGFloat] = [
         .arrow: 3,
+        .line: 3,
         .rectangle: 2,
+        .circle: 2,
         .text: 4,
         .marker: 8,
         .mosaic: 20
@@ -385,7 +464,7 @@ class AnnotationState {
     }
 
     func adjustStrokeWidth(delta: CGFloat) {
-        guard let tool = selectedElement?.tool ?? currentTool, tool != .select else { return }
+        guard let tool = selectedElement?.tool ?? currentTool, tool.usesStrokeWidth else { return }
         if selectedElement != nil {
             pushUndoForPropertyChange(kind: .strokeWidth)
         }
@@ -426,6 +505,7 @@ class AnnotationState {
 
     func duplicateSelected() {
         guard let sel = selectedElement else { return }
+        guard sel.tool != .highlight else { return }
         pushUndo()
         let dup = sel.copy()
         dup.id = UUID()  // new identity
@@ -466,6 +546,9 @@ class AnnotationState {
 // MARK: - Annotation Renderer
 class AnnotationRenderer {
 
+    static let highlightOutsideOpacity: CGFloat = 0.42
+    static let highlightInsideOpacity: CGFloat = 0.08
+
     static func draw(element: AnnotationElement, in context: NSGraphicsContext, selectionOrigin: NSPoint, isSelected: Bool, screenshot: NSImage? = nil, selectionRect: NSRect? = nil) {
         let ox = selectionOrigin.x
         let oy = selectionOrigin.y
@@ -475,8 +558,12 @@ class AnnotationRenderer {
             break  // select is not a drawable element
         case .arrow:
             drawArrow(element: element, ctx: context.cgContext, ox: ox, oy: oy)
+        case .line:
+            drawLine(element: element, ox: ox, oy: oy)
         case .rectangle:
             drawRectangle(element: element, ctx: context.cgContext, ox: ox, oy: oy)
+        case .circle:
+            drawCircle(element: element, ox: ox, oy: oy)
         case .text:
             drawText(element: element, ox: ox, oy: oy)
         case .marker:
@@ -484,6 +571,10 @@ class AnnotationRenderer {
         case .mosaic:
             if let screenshot = screenshot, let selRect = selectionRect {
                 drawMosaic(element: element, ctx: context.cgContext, ox: ox, oy: oy, screenshot: screenshot, selectionRect: selRect)
+            }
+        case .highlight:
+            if let selRect = selectionRect {
+                drawHighlight(element: element, ox: ox, oy: oy, selectionSize: selRect.size)
             }
         }
 
@@ -544,6 +635,16 @@ class AnnotationRenderer {
         path.fill()
     }
 
+    private static func drawLine(element: AnnotationElement, ox: CGFloat, oy: CGFloat) {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy))
+        path.line(to: NSPoint(x: element.endPoint.x + ox, y: element.endPoint.y + oy))
+        path.lineWidth = element.strokeWidth
+        path.lineCapStyle = .round
+        element.color.setStroke()
+        path.stroke()
+    }
+
     private static func drawRectangle(element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat) {
         let r = element.normalizedRect
         let rect = NSRect(x: r.origin.x + ox, y: r.origin.y + oy, width: r.width, height: r.height)
@@ -552,6 +653,36 @@ class AnnotationRenderer {
         path.lineWidth = element.strokeWidth
         element.color.setStroke()
         path.stroke()
+    }
+
+    private static func drawCircle(element: AnnotationElement, ox: CGFloat, oy: CGFloat) {
+        let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
+        let path = NSBezierPath(ovalIn: rect)
+        path.lineWidth = element.strokeWidth
+        element.color.setStroke()
+        path.stroke()
+    }
+
+    private static func drawHighlight(element: AnnotationElement, ox: CGFloat, oy: CGFloat, selectionSize: NSSize) {
+        let canvas = NSRect(x: ox, y: oy, width: selectionSize.width, height: selectionSize.height)
+        let proposedFocus = element.normalizedRect.offsetBy(dx: ox, dy: oy)
+        let focus = canvas.intersection(proposedFocus)
+        guard !focus.isNull, focus.width > 0, focus.height > 0 else { return }
+
+        let outsideRects = [
+            NSRect(x: canvas.minX, y: canvas.minY, width: canvas.width, height: max(0, focus.minY - canvas.minY)),
+            NSRect(x: canvas.minX, y: focus.maxY, width: canvas.width, height: max(0, canvas.maxY - focus.maxY)),
+            NSRect(x: canvas.minX, y: focus.minY, width: max(0, focus.minX - canvas.minX), height: focus.height),
+            NSRect(x: focus.maxX, y: focus.minY, width: max(0, canvas.maxX - focus.maxX), height: focus.height)
+        ]
+
+        NSColor.black.withAlphaComponent(highlightOutsideOpacity).setFill()
+        for rect in outsideRects where rect.width > 0 && rect.height > 0 {
+            NSBezierPath(rect: rect).fill()
+        }
+
+        NSColor.white.withAlphaComponent(highlightInsideOpacity).setFill()
+        NSBezierPath(rect: focus).fill()
     }
 
     private static func drawText(element: AnnotationElement, ox: CGFloat, oy: CGFloat) {
@@ -654,7 +785,7 @@ class AnnotationRenderer {
         let hs: CGFloat = 5
 
         switch element.tool {
-        case .arrow:
+        case .arrow, .line:
             // Show handles at start and end points
             let pts = [
                 NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy),
@@ -670,7 +801,7 @@ class AnnotationRenderer {
                 ring.stroke()
             }
 
-        case .rectangle, .mosaic:
+        case .rectangle, .circle, .mosaic, .highlight:
             // Show handles at four corners of the normalized rect
             let nr = element.normalizedRect
             let corners = [
@@ -708,8 +839,12 @@ class AnnotationRenderer {
             for element in annotations where element.tool == .mosaic {
                 draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
             }
+            // Spotlight is a single background effect: render after mosaic but before ordinary annotations.
+            for element in annotations where element.tool == .highlight {
+                draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
+            }
             // Draw all other annotations on top
-            for element in annotations where element.tool != .mosaic {
+            for element in annotations where element.tool != .mosaic && element.tool != .highlight {
                 draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
             }
         }

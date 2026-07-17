@@ -367,13 +367,17 @@ class OverlayView: NSView {
         needsDisplay = true
     }
 
+    func cycleToolGroup(_ group: [AnnotationTool]) {
+        selectTool(AnnotationTool.cycledTool(in: group, current: annoState.currentTool))
+    }
+
     /// Switch to select tool and select the given element (shows element properties)
     func selectElement(_ element: AnnotationElement) {
         annoState.currentTool = .select
         annoState.selectedElementId = element.id
         annoState.selectedElementIds.removeAll()
         annoState.currentColor = element.color
-        if element.tool != .select {
+        if element.tool.usesStrokeWidth {
             annoState.strokeWidths[element.tool] = element.strokeWidth
         }
         // Element exists, so we're in annotation mode
@@ -395,7 +399,7 @@ class OverlayView: NSView {
 
     func selectColor(_ color: NSColor) {
         annoState.currentColor = color
-        if let sel = annoState.selectedElement {
+        if let sel = annoState.selectedElement, sel.tool.showsColorControls {
             annoState.pushUndoForPropertyChange(kind: .color)
             sel.color = color
         }
@@ -1004,8 +1008,34 @@ class OverlayView: NSView {
                     )
                 }
 
+                // Spotlight is a single background effect. While drawing a new
+                // spotlight, hide the previous one so its outside dimming does not stack.
+                if currentAnnotationElement?.tool != .highlight {
+                    for element in annoState.elements where element.tool == .highlight {
+                        let isSelected = annoState.isElementSelected(element)
+                        AnnotationRenderer.draw(
+                            element: element,
+                            in: context,
+                            selectionOrigin: selectionRect.origin,
+                            isSelected: isSelected,
+                            screenshot: screenshot,
+                            selectionRect: selectionRect
+                        )
+                    }
+                }
+                if let current = currentAnnotationElement, current.tool == .highlight {
+                    AnnotationRenderer.draw(
+                        element: current,
+                        in: context,
+                        selectionOrigin: selectionRect.origin,
+                        isSelected: false,
+                        screenshot: screenshot,
+                        selectionRect: selectionRect
+                    )
+                }
+
                 // Draw all other annotations on top
-                for element in annoState.elements where element.tool != .mosaic {
+                for element in annoState.elements where element.tool != .mosaic && element.tool != .highlight {
                     // Skip drawing text element while it's being edited (textEditView is visible)
                     if element.tool == .text && element.id == annoState.selectedElementId && textEditView != nil {
                         continue
@@ -1020,7 +1050,7 @@ class OverlayView: NSView {
                         selectionRect: selectionRect
                     )
                 }
-                if let current = currentAnnotationElement, current.tool != .mosaic {
+                if let current = currentAnnotationElement, current.tool != .mosaic && current.tool != .highlight {
                     AnnotationRenderer.draw(
                         element: current,
                         in: context,
@@ -1435,15 +1465,20 @@ class OverlayView: NSView {
 
         case .drawingAnnotation:
             if let element = currentAnnotationElement {
-                let dx = abs(element.endPoint.x - element.startPoint.x)
-                let dy = abs(element.endPoint.y - element.startPoint.y)
-                if dx > 3 || dy > 3 {
+                if element.hasRenderableGeometry {
+                    if element.tool == .highlight {
+                        // Spotlight is intentionally singular so outside opacity
+                        // never stacks and progressively darkens the image.
+                        annoState.elements.removeAll { $0.tool == .highlight }
+                    }
                     annoState.elements.append(element)
                     if autoSwitchToSelect {
                         currentAnnotationElement = nil
                         selectElement(element)
                         return
                     }
+                } else {
+                    annoState.popUndoIfUnchanged()
                 }
             }
             currentAnnotationElement = nil
@@ -1717,11 +1752,11 @@ class OverlayView: NSView {
             // Tool shortcuts (only when no modifier keys are pressed)
             switch event.characters?.lowercased() {
             case "s": selectTool(.select)
-            case "a": selectTool(.arrow)
-            case "r": selectTool(.rectangle)
+            case "a": cycleToolGroup([.arrow, .line])
+            case "r": cycleToolGroup([.rectangle, .circle])
             case "t": selectTool(.text)
             case "c": selectTool(.marker)
-            case "m": selectTool(.mosaic)
+            case "m": cycleToolGroup([.mosaic, .highlight])
             case "o": enterOCRMode()
             case "y": enterTranslateMode()
             case "l": performAction(.scrollCapture)

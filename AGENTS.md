@@ -53,7 +53,8 @@ The following rules apply only when the active agent/runtime is Manus. They do n
 | Cmd+S | Selected/Annotating | Save image |
 | Esc | Any | Cancel / dismiss |
 | Cmd+Z | Annotating | Undo |
-| A, R, T, C, M | Selected/Annotating (no modifier) | Arrow, Rectangle, Text, Marker, Mosaic tools |
+| A, R, M | Selected/Annotating (no modifier) | Cycle Arrow/Line, Rectangle/Circle, Mosaic/Highlight |
+| T, C | Selected/Annotating (no modifier) | Text, Marker tools |
 | O | Selected/Annotating (no modifier) | OCR Text Recognition |
 | Shift+O | Selected/Annotating | OCR Copy All Text & Done |
 | C | Idle (no modifier) | Copy color value under cursor & close |
