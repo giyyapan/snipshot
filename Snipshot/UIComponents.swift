@@ -107,24 +107,31 @@ class HoverIconButton: NSView {
     private var tooltipWindow: TooltipWindow?
 
     init(frame: NSRect, symbolName: String, tooltip: String, pointSize: CGFloat = 12) {
+        // Try to load Lucide icon from icons directory first
+        let iconPath = (Bundle.main.resourcePath ?? "") + "/icons/" + symbolName + "@2x.png"
+        let lucideImage = NSImage(contentsOfFile: iconPath)
         self.tooltipText = tooltip
         super.init(frame: frame)
-
-        // Don't use system tooltip (it's slow)
         wantsLayer = true
         layer?.cornerRadius = 5
-
-        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
-        let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: tooltip)?
-            .withSymbolConfiguration(config)
-
-        iconView = NSImageView(frame: bounds.insetBy(dx: 3, dy: 3))
-        iconView.image = img
-        iconView.imageScaling = .scaleProportionallyDown
-        iconView.contentTintColor = normalColor
-        iconView.autoresizingMask = [.width, .height]
-        addSubview(iconView)
-
+        if let lucideImg = lucideImage {
+            iconView = NSImageView(frame: bounds.insetBy(dx: 7, dy: 7))
+            iconView.image = lucideImg
+            iconView.imageScaling = .scaleProportionallyDown
+            iconView.contentTintColor = normalColor
+            iconView.autoresizingMask = [.width, .height]
+            addSubview(iconView)
+        } else {
+            let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+            let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: tooltip)?
+                .withSymbolConfiguration(config)
+            iconView = NSImageView(frame: bounds.insetBy(dx: 3, dy: 3))
+            iconView.image = img
+            iconView.imageScaling = .scaleProportionallyDown
+            iconView.contentTintColor = normalColor
+            iconView.autoresizingMask = [.width, .height]
+            addSubview(iconView)
+        }
         let area = NSTrackingArea(
             rect: bounds,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -133,6 +140,26 @@ class HoverIconButton: NSView {
         )
         addTrackingArea(area)
     }
+
+    init(frame: NSRect, image: NSImage, tooltip: String) {
+        self.tooltipText = tooltip
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        iconView = NSImageView(frame: bounds.insetBy(dx: 3, dy: 3))
+        iconView.image = image
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.autoresizingMask = [.width, .height]
+        addSubview(iconView)
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+    }
+
 
     required init?(coder: NSCoder) { fatalError() }
 

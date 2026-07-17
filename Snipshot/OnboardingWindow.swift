@@ -296,14 +296,20 @@ class OnboardingWindow: NSWindow {
     // MARK: - Actions
 
     @objc private func grantAccessibility() {
-        // Trigger the system authorization prompt (system will guide user to Settings if needed)
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        AXIsProcessTrustedWithOptions(options)
+        if #available(macOS 14.0, *) {
+            PermisoAssistant.shared.present(panel: .accessibility)
+        } else {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+        }
     }
 
     @objc private func grantScreenRecording() {
-        // Trigger the system authorization prompt (system will guide user to Settings if needed)
-        CGRequestScreenCaptureAccess()
+        if #available(macOS 14.0, *) {
+            PermisoAssistant.shared.present(panel: .screenRecording)
+        } else {
+            CGRequestScreenCaptureAccess()
+        }
     }
 
     @objc private func doneClicked() {
