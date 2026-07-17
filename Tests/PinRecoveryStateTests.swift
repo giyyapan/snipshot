@@ -4,85 +4,105 @@ private struct TestFailure: Error {
     let message: String
 }
 
+private struct TestPosition: Equatable {
+    let x: Int
+    let y: Int
+}
+
 @main
 private enum PinRecoveryStateTests {
     private static var testCount = 0
 
     static func main() throws {
-        try test("falls back when there is no unpin history") {
-            var state = PinRecoveryState<String>()
-            let selection = state.selectImage { "clipboard" }
-            try expect(value(of: selection) == "clipboard", "clipboard fallback was not selected")
-            try expect(isFallback(selection), "selection source was not fallback")
+        try test("fallback keeps its centered position") {
+            var state = PinRecoveryState<String, TestPosition>()
+            let centered = TestPosition(x: 500, y: 400)
+            let selection = state.selectImage {
+                PinRecoveryRecord(value: "clipboard", position: centered)
+            }
+
+            let record = fallbackRecord(of: selection)
+            try expect(record?.value == "clipboard", "clipboard fallback was not selected")
+            try expect(record?.position == centered, "fallback centered position changed")
         }
 
-        try test("prefers unpinned image without reading clipboard") {
-            var state = PinRecoveryState<String>()
-            state.recordUnpin("unpinned")
+        try test("recovery binds unpinned image and position without reading fallback") {
+            var state = PinRecoveryState<String, TestPosition>()
+            let unpinnedPosition = TestPosition(x: -1200, y: 275)
+            state.recordUnpin("unpinned", at: unpinnedPosition)
             var fallbackRead = false
 
             let selection = state.selectImage {
                 fallbackRead = true
-                return "clipboard"
+                return PinRecoveryRecord(
+                    value: "changed clipboard",
+                    position: TestPosition(x: 500, y: 400)
+                )
             }
 
-            try expect(value(of: selection) == "unpinned", "unpinned image was not restored")
-            try expect(isRecovered(selection), "selection source was not recovered")
-            try expect(!fallbackRead, "clipboard was read despite available unpin history")
+            let record = recoveredRecord(of: selection)
+            try expect(record?.value == "unpinned", "unpinned image was not restored")
+            try expect(record?.position == unpinnedPosition, "unpinned position was not restored")
+            try expect(!fallbackRead, "fallback was read despite available recovery")
         }
 
-        try test("restored image is consumed") {
-            var state = PinRecoveryState<String>()
-            state.recordUnpin("unpinned")
-            _ = state.selectImage { "first clipboard" }
+        try test("recovery is consumed before the next fallback") {
+            var state = PinRecoveryState<String, TestPosition>()
+            state.recordUnpin("unpinned", at: TestPosition(x: 20, y: 30))
+            _ = state.selectImage { nil }
 
-            let selection = state.selectImage { "current clipboard" }
-            try expect(value(of: selection) == "current clipboard", "consumed recovery candidate was reused")
-            try expect(isFallback(selection), "second selection did not fall back")
+            let centered = TestPosition(x: 500, y: 400)
+            let selection = state.selectImage {
+                PinRecoveryRecord(value: "current clipboard", position: centered)
+            }
+            let record = fallbackRecord(of: selection)
+            try expect(record?.value == "current clipboard", "consumed recovery was reused")
+            try expect(record?.position == centered, "fallback did not retain centered position")
         }
 
-        try test("latest unpin replaces earlier history") {
-            var state = PinRecoveryState<String>()
-            state.recordUnpin("first")
-            state.recordUnpin("second")
+        try test("latest unpin atomically replaces image and position") {
+            var state = PinRecoveryState<String, TestPosition>()
+            state.recordUnpin("first", at: TestPosition(x: 10, y: 20))
+            let latestPosition = TestPosition(x: 300, y: -40)
+            state.recordUnpin("second", at: latestPosition)
 
-            let selection = state.selectImage { "clipboard" }
-            try expect(value(of: selection) == "second", "latest unpinned image was not selected")
+            let record = recoveredRecord(of: state.selectImage { nil })
+            try expect(record?.value == "second", "latest unpinned image was not selected")
+            try expect(record?.position == latestPosition, "position did not come from latest unpin")
         }
 
-        try test("pinning a new image clears stale unpin history") {
-            var state = PinRecoveryState<String>()
-            state.recordUnpin("stale")
+        try test("pinning a new image clears stale recovery record") {
+            var state = PinRecoveryState<String, TestPosition>()
+            state.recordUnpin("stale", at: TestPosition(x: 10, y: 20))
             state.recordPin()
 
-            let selection = state.selectImage { "clipboard" }
-            try expect(value(of: selection) == "clipboard", "stale unpin history survived a new pin")
-            try expect(isFallback(selection), "selection did not fall back after a new pin")
+            let centered = TestPosition(x: 500, y: 400)
+            let selection = state.selectImage {
+                PinRecoveryRecord(value: "clipboard", position: centered)
+            }
+            try expect(fallbackRecord(of: selection)?.position == centered, "stale recovery survived a new pin")
         }
 
         try test("returns nil when neither recovery nor fallback exists") {
-            var state = PinRecoveryState<String>()
+            var state = PinRecoveryState<String, TestPosition>()
             try expect(state.selectImage { nil } == nil, "empty state unexpectedly selected an image")
         }
 
         print("PinRecoveryStateTests: \(testCount) tests passed")
     }
 
-    private static func value(of selection: PinImageSelection<String>?) -> String? {
-        switch selection {
-        case .recovered(let value), .fallback(let value): return value
-        case nil: return nil
-        }
+    private static func recoveredRecord(
+        of selection: PinImageSelection<String, TestPosition>?
+    ) -> PinRecoveryRecord<String, TestPosition>? {
+        if case .recovered(let record) = selection { return record }
+        return nil
     }
 
-    private static func isRecovered(_ selection: PinImageSelection<String>?) -> Bool {
-        if case .recovered = selection { return true }
-        return false
-    }
-
-    private static func isFallback(_ selection: PinImageSelection<String>?) -> Bool {
-        if case .fallback = selection { return true }
-        return false
+    private static func fallbackRecord(
+        of selection: PinImageSelection<String, TestPosition>?
+    ) -> PinRecoveryRecord<String, TestPosition>? {
+        if case .fallback(let record) = selection { return record }
+        return nil
     }
 
     private static func test(_ name: String, _ body: () throws -> Void) throws {

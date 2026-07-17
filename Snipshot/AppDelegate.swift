@@ -33,7 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var localMonitor: Any?
     private var overlayWindow: OverlayWindow?
     private var pinWindows: [PinWindow] = []
-    private var pinRecoveryState = PinRecoveryState<NSImage>()
+    private var pinRecoveryState = PinRecoveryState<NSImage, NSPoint>()
     private var settingsWindow: SettingsWindow?
     private var onboardingWindow: OnboardingWindow?
     private let secureInputRecovery = SecureInputRecoveryController()
@@ -566,9 +566,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // MARK: - Pin
     private func pinImage(_ image: NSImage, at origin: NSPoint) {
         pinRecoveryState.recordPin()
-        let pinWindow = PinWindow(image: image, origin: origin) { [weak self] unpinnedImage in
-            self?.pinRecoveryState.recordUnpin(unpinnedImage)
-            logMessage("Remembered most recently unpinned image.")
+        let pinWindow = PinWindow(image: image, origin: origin) { [weak self] unpinnedImage, unpinnedOrigin in
+            self?.pinRecoveryState.recordUnpin(unpinnedImage, at: unpinnedOrigin)
+            logMessage("Remembered most recently unpinned image and position.")
         }
         pinWindow.makeKeyAndOrderFront(nil)
         pinWindows.append(pinWindow)
@@ -578,30 +578,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     @objc func pinFromRecentUnpinOrClipboard() {
-        guard let screen = NSScreen.main else { return }
         guard let selection = pinRecoveryState.selectImage(fallback: {
-            NSImage(pasteboard: NSPasteboard.general)
+            guard let image = NSImage(pasteboard: NSPasteboard.general),
+                  let screen = NSScreen.main else { return nil }
+            let origin = NSPoint(
+                x: (screen.frame.width - image.size.width) / 2 + screen.frame.origin.x,
+                y: (screen.frame.height - image.size.height) / 2 + screen.frame.origin.y
+            )
+            return PinRecoveryRecord(value: image, position: origin)
         }) else {
             logMessage("No recently unpinned or clipboard image to pin.")
             return
         }
 
-        let image: NSImage
+        let record: PinRecoveryRecord<NSImage, NSPoint>
         switch selection {
-        case .recovered(let recoveredImage):
-            image = recoveredImage
-            logMessage("Restoring most recently unpinned image: \(Int(image.size.width))x\(Int(image.size.height))")
-        case .fallback(let clipboardImage):
-            image = clipboardImage
-            logMessage("Pinning image from clipboard: \(Int(image.size.width))x\(Int(image.size.height))")
+        case .recovered(let recoveredRecord):
+            record = recoveredRecord
+            logMessage("Restoring most recently unpinned image at its previous position: \(Int(record.value.size.width))x\(Int(record.value.size.height))")
+        case .fallback(let clipboardRecord):
+            record = clipboardRecord
+            logMessage("Pinning image from clipboard: \(Int(record.value.size.width))x\(Int(record.value.size.height))")
         }
 
-        let origin = NSPoint(
-            x: (screen.frame.width - image.size.width) / 2 + screen.frame.origin.x,
-            y: (screen.frame.height - image.size.height) / 2 + screen.frame.origin.y
-        )
-
-        pinImage(image, at: origin)
+        pinImage(record.value, at: record.position)
     }
 
     @objc private func openSettings() {
