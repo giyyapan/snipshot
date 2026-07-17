@@ -320,7 +320,41 @@ class AnnotationState {
         .white: "white", .black: "black"
     ]
 
-    var currentTool: AnnotationTool? = nil
+    /// The last selected member of each grouped toolbar slot. This is kept
+    /// independently from `currentTool` so switching to Select does not reset
+    /// the visible group choice back to Arrow/Rectangle/Mosaic.
+    private var rememberedGroupTools: [AnnotationTool: AnnotationTool] = [
+        .arrow: .arrow,
+        .rectangle: .rectangle,
+        .mosaic: .mosaic
+    ]
+
+    var currentTool: AnnotationTool? = nil {
+        didSet {
+            guard let currentTool else { return }
+            for group in AnnotationTool.toolbarGroups where group.count > 1 && group.contains(currentTool) {
+                if let groupKey = group.first {
+                    rememberedGroupTools[groupKey] = currentTool
+                }
+                break
+            }
+        }
+    }
+
+    func rememberedTool(in group: [AnnotationTool]) -> AnnotationTool {
+        guard let fallback = group.first else { return .select }
+        if let currentTool, group.contains(currentTool) { return currentTool }
+        return rememberedGroupTools[fallback].flatMap { group.contains($0) ? $0 : nil } ?? fallback
+    }
+
+    /// If the shortcut is already active, advance to the next group member.
+    /// From Select or another group, restore this group's remembered member.
+    func toolForGroupShortcut(_ group: [AnnotationTool]) -> AnnotationTool {
+        if let currentTool, group.contains(currentTool) {
+            return AnnotationTool.cycledTool(in: group, current: currentTool)
+        }
+        return rememberedTool(in: group)
+    }
 
     var currentColor: NSColor = .systemRed {
         didSet {

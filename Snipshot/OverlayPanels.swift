@@ -153,7 +153,7 @@ extension OverlayView {
         // Tool buttons
         for group in toolGroups {
             guard let fallbackTool = group.first else { continue }
-            let displayedTool = group.contains(annoState.currentTool ?? .select) ? (annoState.currentTool ?? fallbackTool) : fallbackTool
+            let displayedTool = annoState.rememberedTool(in: group)
             let tooltip = group.map(\.displayName).joined(separator: " / ")
             let btn = HoverIconButton(
                 frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize),
@@ -547,15 +547,32 @@ extension OverlayView {
     // MARK: - Grouped Annotation Tool Menu
     func showToolGroupMenu(_ tools: [AnnotationTool], from view: NSView) {
         let menu = NSMenu()
+        let rememberedTool = annoState.rememberedTool(in: tools)
         for tool in tools {
             let item = NSMenuItem(title: tool.displayName, action: #selector(groupedToolMenuSelect(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = tool.rawValue
-            item.state = annoState.currentTool == tool ? .on : .off
+            item.state = rememberedTool == tool ? .on : .off
             item.image = NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.displayName)
             menu.addItem(item)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 2), in: view)
+
+        // NSMenu anchors its top edge at the supplied point and extends down.
+        // Include the menu height when opening upward so it clears the button;
+        // near the top screen edge, put the whole menu below the button instead.
+        let gap: CGFloat = 6
+        let menuSize = menu.size
+        let menuX = view.bounds.midX - menuSize.width / 2
+        var menuY = view.bounds.maxY + gap + menuSize.height
+        if let window = view.window {
+            let buttonTop = window.convertPoint(toScreen: view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.maxY), to: nil))
+            let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+            let availableAbove = visibleFrame.maxY - buttonTop.y
+            if availableAbove < menuSize.height + gap {
+                menuY = view.bounds.minY - gap
+            }
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: menuX, y: menuY), in: view)
     }
 
     @objc private func groupedToolMenuSelect(_ sender: NSMenuItem) {
