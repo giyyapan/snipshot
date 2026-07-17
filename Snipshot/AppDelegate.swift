@@ -24,7 +24,7 @@ func logMessage(_ message: String) {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
 
     // MARK: - Properties
     private var statusItem: NSStatusItem!
@@ -35,6 +35,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var pinWindows: [PinWindow] = []
     private var settingsWindow: SettingsWindow?
     private var onboardingWindow: OnboardingWindow?
+    private let secureInputRecovery = SecureInputRecoveryController()
+    private var shortcutHealthTimer: Timer?
+    private var isRefreshingShortcutHealth = false
+    private var shortcutStatusMenuItem: NSMenuItem?
+    private var secureInputStatusMenuItem: NSMenuItem?
+    private var fixSecureInputMenuItem: NSMenuItem?
+    private var shortcutSnapshot = SecureInputSnapshot(
+        isSecureInputEnabled: false,
+        isAccessibilityTrusted: false,
+        isShortcutListenerAvailable: false
+    )
     var isCapturing = false
     private var captureHotkey: HotkeyConfig = HotkeyConfig.defaultCapture
 
@@ -107,6 +118,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupGlobalHotkey()
         }
 
+        refreshShortcutHealth()
+        shortcutHealthTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.refreshShortcutHealth()
+        }
+
         // Listen for "open settings for translation" notification
         NotificationCenter.default.addObserver(self, selector: #selector(openSettingsForTranslation), name: NSNotification.Name("OpenSettingsForTranslation"), object: nil)
 
@@ -114,6 +130,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        shortcutHealthTimer?.invalidate()
         removeGlobalHotkey()
     }
 
@@ -152,7 +169,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateStatusMenu() {
         let menu = NSMenu()
+        menu.delegate = self
+        menu.autoenablesItems = false
         menu.addItem(NSMenuItem(title: "Capture (\(captureHotkey.displayString))", action: #selector(startCapture), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+
+        let shortcutStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        shortcutStatusItem.isEnabled = false
+        menu.addItem(shortcutStatusItem)
+        shortcutStatusMenuItem = shortcutStatusItem
+
+        let secureInputStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        secureInputStatusItem.isEnabled = false
+        menu.addItem(secureInputStatusItem)
+        secureInputStatusMenuItem = secureInputStatusItem
+
+        let fixSecureInputItem = NSMenuItem(title: "", action: #selector(fixSecureInput), keyEquivalent: "")
+        fixSecureInputItem.target = self
+        menu.addItem(fixSecureInputItem)
+        fixSecureInputMenuItem = fixSecureInputItem
+
+        let refreshShortcutStatusItem = NSMenuItem(title: "Refresh Shortcut Status", action: #selector(refreshShortcutHealth), keyEquivalent: "")
+        refreshShortcutStatusItem.target = self
+        menu.addItem(refreshShortcutStatusItem)
         menu.addItem(NSMenuItem.separator())
 
         if updateAvailable {
@@ -171,10 +210,59 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit Snipshot", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
+        applyShortcutHealthPresentation()
     }
 
     @objc private func checkForUpdatesNow() {
         updaterController.checkForUpdates(nil)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshShortcutHealth()
+    }
+
+    @objc private func refreshShortcutHealth() {
+        let eventTapAvailable = eventTap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
+        let shortcutListenerAvailable = eventTapAvailable || globalMonitor != nil
+        guard !isRefreshingShortcutHealth else { return }
+        isRefreshingShortcutHealth = true
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let snapshot = self.secureInputRecovery.currentSnapshot(
+                shortcutListenerAvailable: shortcutListenerAvailable
+            )
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.isRefreshingShortcutHealth = false
+                self.shortcutSnapshot = snapshot
+                self.applyShortcutHealthPresentation()
+            }
+        }
+    }
+
+    private func applyShortcutHealthPresentation() {
+        let presentation = SecureInputMenuPresentation(snapshot: shortcutSnapshot)
+        shortcutStatusMenuItem?.title = presentation.shortcutStatusTitle
+        secureInputStatusMenuItem?.title = presentation.secureInputStatusTitle
+        fixSecureInputMenuItem?.title = presentation.fixTitle
+        fixSecureInputMenuItem?.isEnabled = presentation.isFixEnabled
+
+        guard let button = statusItem?.button else { return }
+        if shortcutSnapshot.isSecureInputEnabled {
+            button.contentTintColor = .systemRed
+            button.setAccessibilityLabel("Snipshot — global shortcuts blocked by Secure Input")
+        } else {
+            button.contentTintColor = nil
+            button.setAccessibilityLabel("Snipshot")
+        }
+    }
+
+    @objc private func fixSecureInput() {
+        secureInputRecovery.start { [weak self] in
+            self?.refreshShortcutHealth()
+            self?.hideDockIconIfNoWindows()
+        }
     }
 
     // MARK: - Global Hotkey
@@ -189,6 +277,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         setupNSEventMonitor()
+        refreshShortcutHealth()
     }
 
     private func setupEventTap() {
@@ -202,6 +291,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
                     if let machPort = appDelegate.eventTap {
                         CGEvent.tapEnable(tap: machPort, enable: true)
+                    }
+                    DispatchQueue.main.async {
+                        appDelegate.refreshShortcutHealth()
                     }
                 }
                 return Unmanaged.passRetained(event)
@@ -260,6 +352,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             userInfo: refcon
         ) else {
             logMessage("Failed to create CGEvent tap.")
+            refreshShortcutHealth()
             return
         }
 

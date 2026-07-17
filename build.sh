@@ -81,6 +81,8 @@ swiftc \
     "$PROJECT_DIR/Snipshot/main.swift" \
     "$PROJECT_DIR/Snipshot/AppDelegate.swift" \
     "$PROJECT_DIR/Sources/ImageOutputCore/ImageOutput.swift" \
+    "$PROJECT_DIR/Sources/SecureInputCore/SecureInputStatus.swift" \
+    "$PROJECT_DIR/Snipshot/SecureInputRecovery.swift" \
     "$PROJECT_DIR/Snipshot/UIComponents.swift" \
     "$PROJECT_DIR/Snipshot/OverlayWindow.swift" \
     "$PROJECT_DIR/Snipshot/OverlayPanels.swift" \
