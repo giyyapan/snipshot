@@ -33,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var localMonitor: Any?
     private var overlayWindow: OverlayWindow?
     private var pinWindows: [PinWindow] = []
+    private var pinRecoveryState = PinRecoveryState<NSImage>()
     private var settingsWindow: SettingsWindow?
     private var onboardingWindow: OnboardingWindow?
     private let secureInputRecovery = SecureInputRecoveryController()
@@ -333,7 +334,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 }
                 DispatchQueue.main.async {
                     logMessage("F3 pressed (CGEvent tap)")
-                    appDelegate.pinFromClipboard()
+                    appDelegate.pinFromRecentUnpinOrClipboard()
                 }
                 return nil
             }
@@ -373,7 +374,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             } else if event.keyCode == 99 {
                 guard !self.isCapturing else { return }
                 logMessage("F3 pressed (global NSEvent monitor)")
-                self.pinFromClipboard()
+                self.pinFromRecentUnpinOrClipboard()
             }
         }
 
@@ -386,7 +387,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             } else if event.keyCode == 99 {
                 guard !self.isCapturing else { return event }
                 logMessage("F3 pressed (local NSEvent monitor)")
-                self.pinFromClipboard()
+                self.pinFromRecentUnpinOrClipboard()
                 return nil
             }
             return event
@@ -564,7 +565,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     // MARK: - Pin
     private func pinImage(_ image: NSImage, at origin: NSPoint) {
-        let pinWindow = PinWindow(image: image, origin: origin)
+        pinRecoveryState.recordPin()
+        let pinWindow = PinWindow(image: image, origin: origin) { [weak self] unpinnedImage in
+            self?.pinRecoveryState.recordUnpin(unpinnedImage)
+            logMessage("Remembered most recently unpinned image.")
+        }
         pinWindow.makeKeyAndOrderFront(nil)
         pinWindows.append(pinWindow)
         pinWindows.removeAll { !$0.isVisible }
@@ -572,17 +577,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc func pinFromClipboard() {
-        let pasteboard = NSPasteboard.general
-
-        guard let image = NSImage(pasteboard: pasteboard) else {
-            logMessage("No image in clipboard to pin.")
+    @objc func pinFromRecentUnpinOrClipboard() {
+        guard let screen = NSScreen.main else { return }
+        guard let selection = pinRecoveryState.selectImage(fallback: {
+            NSImage(pasteboard: NSPasteboard.general)
+        }) else {
+            logMessage("No recently unpinned or clipboard image to pin.")
             return
         }
 
-        logMessage("Pinning image from clipboard: \(Int(image.size.width))x\(Int(image.size.height))")
+        let image: NSImage
+        switch selection {
+        case .recovered(let recoveredImage):
+            image = recoveredImage
+            logMessage("Restoring most recently unpinned image: \(Int(image.size.width))x\(Int(image.size.height))")
+        case .fallback(let clipboardImage):
+            image = clipboardImage
+            logMessage("Pinning image from clipboard: \(Int(image.size.width))x\(Int(image.size.height))")
+        }
 
-        guard let screen = NSScreen.main else { return }
         let origin = NSPoint(
             x: (screen.frame.width - image.size.width) / 2 + screen.frame.origin.x,
             y: (screen.frame.height - image.size.height) / 2 + screen.frame.origin.y
