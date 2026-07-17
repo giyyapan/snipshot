@@ -3,9 +3,9 @@ import Cocoa
 class PinWindow: NSWindow {
 
     let pinnedImage: NSImage
-    private let onUnpin: (PinWindow, NSImage, NSPoint) -> Void
+    private let onUnpin: (PinWindow, NSImage, NSPoint, CGFloat) -> Void
     private var didUnpin = false
-    var currentScale: CGFloat = 1.0
+    var currentScale: CGFloat
     let baseSize: NSSize
 
     /// Stable center point in screen coordinates, updated only on drag or explicit reposition.
@@ -21,17 +21,25 @@ class PinWindow: NSWindow {
     init(
         image: NSImage,
         origin: NSPoint,
-        onUnpin: @escaping (PinWindow, NSImage, NSPoint) -> Void = { _, _, _ in }
+        initialScale: CGFloat = 1.0,
+        onUnpin: @escaping (PinWindow, NSImage, NSPoint, CGFloat) -> Void = { _, _, _, _ in }
     ) {
+        let scale = initialScale.clamped(to: 0.1...5.0)
         self.pinnedImage = image
         self.onUnpin = onUnpin
+        self.currentScale = scale
         self.baseSize = image.size
+
+        let displaySize = NSSize(
+            width: image.size.width * scale,
+            height: image.size.height * scale
+        )
 
         let windowRect = NSRect(
             x: origin.x,
             y: origin.y,
-            width: baseSize.width,
-            height: baseSize.height
+            width: displaySize.width,
+            height: displaySize.height
         )
 
         super.init(
@@ -50,15 +58,15 @@ class PinWindow: NSWindow {
         self.acceptsMouseMovedEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let pv = PinContentView(frame: NSRect(origin: .zero, size: baseSize), image: image, parentWindow: self)
+        let pv = PinContentView(frame: NSRect(origin: .zero, size: displaySize), image: image, parentWindow: self)
         self.contentView = pv
         self.imageView = pv.imageView
         self.pinView = pv
 
         // Initialize stable center from the window frame
         self.stableCenter = NSPoint(
-            x: windowRect.origin.x + baseSize.width / 2,
-            y: windowRect.origin.y + baseSize.height / 2
+            x: windowRect.midX,
+            y: windowRect.midY
         )
     }
 
@@ -96,7 +104,7 @@ class PinWindow: NSWindow {
     func unpin() {
         guard !didUnpin else { return }
         didUnpin = true
-        onUnpin(self, pinnedImage, frame.origin)
+        onUnpin(self, pinnedImage, frame.origin, currentScale)
         close()
     }
 

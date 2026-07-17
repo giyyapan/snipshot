@@ -6,6 +6,11 @@ import Sparkle
 
 private let logger = Logger(subsystem: "com.giyyapan.snipshot", category: "main")
 
+private struct PinPlacement {
+    let origin: NSPoint
+    let scale: CGFloat
+}
+
 func logMessage(_ message: String) {
     logger.notice("\(message, privacy: .public)")
     let logFile = NSHomeDirectory() + "/snipshot_debug.log"
@@ -33,7 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var localMonitor: Any?
     private var overlayWindow: OverlayWindow?
     private var pinWindows: [PinWindow] = []
-    private var pinRecoveryState = PinRecoveryState<NSImage, NSPoint>()
+    private var pinRecoveryState = PinRecoveryState<NSImage, PinPlacement>()
     private var settingsWindow: SettingsWindow?
     private var onboardingWindow: OnboardingWindow?
     private let secureInputRecovery = SecureInputRecoveryController()
@@ -564,10 +569,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     // MARK: - Pin
-    private func pinImage(_ image: NSImage, at origin: NSPoint) {
+    private func pinImage(_ image: NSImage, at origin: NSPoint, scale: CGFloat = 1.0) {
         pinRecoveryState.recordPin()
-        let pinWindow = PinWindow(image: image, origin: origin) { [weak self] window, unpinnedImage, unpinnedOrigin in
-            self?.handlePinUnpin(window, image: unpinnedImage, origin: unpinnedOrigin)
+        let pinWindow = PinWindow(image: image, origin: origin, initialScale: scale) {
+            [weak self] window, unpinnedImage, unpinnedOrigin, unpinnedScale in
+            self?.handlePinUnpin(
+                window,
+                image: unpinnedImage,
+                placement: PinPlacement(origin: unpinnedOrigin, scale: unpinnedScale)
+            )
         }
         pinWindow.makeKeyAndOrderFront(nil)
         pinWindows.append(pinWindow)
@@ -576,9 +586,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func handlePinUnpin(_ closingWindow: PinWindow, image: NSImage, origin: NSPoint) {
-        pinRecoveryState.recordUnpin(image, at: origin)
-        logMessage("Remembered most recently unpinned image and position.")
+    private func handlePinUnpin(_ closingWindow: PinWindow, image: NSImage, placement: PinPlacement) {
+        pinRecoveryState.recordUnpin(image, placement: placement)
+        logMessage("Remembered most recently unpinned image, position, and scale.")
 
         let managedPinIDs = Set(pinWindows.map(ObjectIdentifier.init))
         let orderedWindows = NSApp.orderedWindows.map { window in
@@ -615,23 +625,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 x: (screen.frame.width - image.size.width) / 2 + screen.frame.origin.x,
                 y: (screen.frame.height - image.size.height) / 2 + screen.frame.origin.y
             )
-            return PinRecoveryRecord(value: image, position: origin)
+            return PinRecoveryRecord(
+                value: image,
+                placement: PinPlacement(origin: origin, scale: 1.0)
+            )
         }) else {
             logMessage("No recently unpinned or clipboard image to pin.")
             return
         }
 
-        let record: PinRecoveryRecord<NSImage, NSPoint>
+        let record: PinRecoveryRecord<NSImage, PinPlacement>
         switch selection {
         case .recovered(let recoveredRecord):
             record = recoveredRecord
-            logMessage("Restoring most recently unpinned image at its previous position: \(Int(record.value.size.width))x\(Int(record.value.size.height))")
+            logMessage("Restoring most recently unpinned image at its previous position and scale: \(Int(record.value.size.width))x\(Int(record.value.size.height)) @ \(record.placement.scale)x")
         case .fallback(let clipboardRecord):
             record = clipboardRecord
             logMessage("Pinning image from clipboard: \(Int(record.value.size.width))x\(Int(record.value.size.height))")
         }
 
-        pinImage(record.value, at: record.position)
+        pinImage(
+            record.value,
+            at: record.placement.origin,
+            scale: record.placement.scale
+        )
     }
 
     @objc private func openSettings() {

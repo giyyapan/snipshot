@@ -9,16 +9,21 @@ private struct TestPosition: Equatable {
     let y: Int
 }
 
+private struct TestPlacement: Equatable {
+    let position: TestPosition
+    let scale: Double
+}
+
 @main
 private enum PinRecoveryStateTests {
     private static var testCount = 0
 
     static func main() throws {
-        try test("multiple recoveries are strict LIFO with their own positions") {
-            var state = PinRecoveryState<String, TestPosition>()
-            state.recordUnpin("first", at: TestPosition(x: 10, y: 20))
-            state.recordUnpin("second", at: TestPosition(x: -300, y: 40))
-            state.recordUnpin("third", at: TestPosition(x: 500, y: -60))
+        try test("multiple recoveries are strict LIFO with their own placement") {
+            var state = PinRecoveryState<String, TestPlacement>()
+            state.recordUnpin("first", placement: placement(10, 20, scale: 0.5))
+            state.recordUnpin("second", placement: placement(-300, 40, scale: 1.75))
+            state.recordUnpin("third", placement: placement(500, -60, scale: 2.5))
             var fallbackReads = 0
 
             let third = recoveredRecord(of: state.selectImage {
@@ -34,30 +39,27 @@ private enum PinRecoveryStateTests {
                 return fallbackRecord()
             })
 
-            try expect(third?.value == "third" && third?.position == TestPosition(x: 500, y: -60), "third record was not first out")
-            try expect(second?.value == "second" && second?.position == TestPosition(x: -300, y: 40), "second record was not second out")
-            try expect(first?.value == "first" && first?.position == TestPosition(x: 10, y: 20), "first record was not last out")
+            try expect(third?.value == "third" && third?.placement == placement(500, -60, scale: 2.5), "third record was not first out with its placement")
+            try expect(second?.value == "second" && second?.placement == placement(-300, 40, scale: 1.75), "second record was not second out with its placement")
+            try expect(first?.value == "first" && first?.placement == placement(10, 20, scale: 0.5), "first record was not last out with its placement")
             try expect(fallbackReads == 0, "fallback was read while recovery records remained")
         }
 
-        try test("stack exhaustion falls back with centered clipboard position") {
-            var state = PinRecoveryState<String, TestPosition>()
-            state.recordUnpin("unpinned", at: TestPosition(x: 20, y: 30))
+        try test("stack exhaustion falls back centered at default scale") {
+            var state = PinRecoveryState<String, TestPlacement>()
+            state.recordUnpin("unpinned", placement: placement(20, 30, scale: 2.0))
             _ = state.selectImage { nil }
 
-            let centered = TestPosition(x: 500, y: 400)
-            let selection = state.selectImage {
-                PinRecoveryRecord(value: "changed clipboard", position: centered)
-            }
+            let selection = state.selectImage { fallbackRecord() }
             let record = selectedFallbackRecord(of: selection)
             try expect(record?.value == "changed clipboard", "clipboard fallback was not selected")
-            try expect(record?.position == centered, "clipboard fallback lost its centered position")
+            try expect(record?.placement == placement(500, 400, scale: 1.0), "clipboard fallback placement changed")
         }
 
         try test("capacity evicts only the oldest records") {
-            var state = PinRecoveryState<String, TestPosition>(capacity: 3)
+            var state = PinRecoveryState<String, TestPlacement>(capacity: 3)
             for index in 1...4 {
-                state.recordUnpin("image-\(index)", at: TestPosition(x: index, y: -index))
+                state.recordUnpin("image-\(index)", placement: placement(index, -index, scale: Double(index)))
             }
 
             let values = (0..<3).compactMap { _ in
@@ -69,9 +71,9 @@ private enum PinRecoveryStateTests {
 
         try test("default capacity is the conservative ten-record limit") {
             try expect(defaultPinRecoveryHistoryCapacity == 10, "default recovery capacity changed")
-            var state = PinRecoveryState<String, TestPosition>()
+            var state = PinRecoveryState<String, TestPlacement>()
             for index in 1...11 {
-                state.recordUnpin("image-\(index)", at: TestPosition(x: index, y: index))
+                state.recordUnpin("image-\(index)", placement: placement(index, index, scale: 1.0))
             }
 
             let values = (0..<10).compactMap { _ in
@@ -81,22 +83,22 @@ private enum PinRecoveryStateTests {
             try expect(state.selectImage { nil } == nil, "default history retained more than ten records")
         }
 
-        try test("a recovered image can be unpinned back onto the stack") {
-            var state = PinRecoveryState<String, TestPosition>()
-            state.recordUnpin("image", at: TestPosition(x: 10, y: 20))
+        try test("a recovered image can be unpinned with its updated placement") {
+            var state = PinRecoveryState<String, TestPlacement>()
+            state.recordUnpin("image", placement: placement(10, 20, scale: 0.75))
             let recovered = recoveredRecord(of: state.selectImage { nil })
-            let newPosition = TestPosition(x: 700, y: 300)
-            state.recordUnpin(recovered!.value, at: newPosition)
+            let updatedPlacement = placement(700, 300, scale: 2.25)
+            state.recordUnpin(recovered!.value, placement: updatedPlacement)
 
             let recoveredAgain = recoveredRecord(of: state.selectImage { nil })
             try expect(recoveredAgain?.value == "image", "re-unpinned image was not recoverable")
-            try expect(recoveredAgain?.position == newPosition, "re-unpin did not use its new position")
+            try expect(recoveredAgain?.placement == updatedPlacement, "re-unpin did not use its updated position and scale")
         }
 
         try test("ordinary new pins do not clear recovery history") {
-            var state = PinRecoveryState<String, TestPosition>()
-            state.recordUnpin("first", at: TestPosition(x: 10, y: 20))
-            state.recordUnpin("second", at: TestPosition(x: 30, y: 40))
+            var state = PinRecoveryState<String, TestPlacement>()
+            state.recordUnpin("first", placement: placement(10, 20, scale: 0.5))
+            state.recordUnpin("second", placement: placement(30, 40, scale: 2.0))
             state.recordPin()
 
             let second = recoveredRecord(of: state.selectImage { nil })
@@ -105,27 +107,34 @@ private enum PinRecoveryStateTests {
         }
 
         try test("returns nil when neither recovery nor fallback exists") {
-            var state = PinRecoveryState<String, TestPosition>()
+            var state = PinRecoveryState<String, TestPlacement>()
             try expect(state.selectImage { nil } == nil, "empty state unexpectedly selected an image")
         }
 
         print("PinRecoveryStateTests: \(testCount) tests passed")
     }
 
-    private static func fallbackRecord() -> PinRecoveryRecord<String, TestPosition> {
-        PinRecoveryRecord(value: "clipboard", position: TestPosition(x: 500, y: 400))
+    private static func placement(_ x: Int, _ y: Int, scale: Double) -> TestPlacement {
+        TestPlacement(position: TestPosition(x: x, y: y), scale: scale)
+    }
+
+    private static func fallbackRecord() -> PinRecoveryRecord<String, TestPlacement> {
+        PinRecoveryRecord(
+            value: "changed clipboard",
+            placement: placement(500, 400, scale: 1.0)
+        )
     }
 
     private static func recoveredRecord(
-        of selection: PinImageSelection<String, TestPosition>?
-    ) -> PinRecoveryRecord<String, TestPosition>? {
+        of selection: PinImageSelection<String, TestPlacement>?
+    ) -> PinRecoveryRecord<String, TestPlacement>? {
         if case .recovered(let record) = selection { return record }
         return nil
     }
 
     private static func selectedFallbackRecord(
-        of selection: PinImageSelection<String, TestPosition>?
-    ) -> PinRecoveryRecord<String, TestPosition>? {
+        of selection: PinImageSelection<String, TestPlacement>?
+    ) -> PinRecoveryRecord<String, TestPlacement>? {
         if case .fallback(let record) = selection { return record }
         return nil
     }
