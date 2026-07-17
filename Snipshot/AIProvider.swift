@@ -27,9 +27,9 @@ enum AIProviderID: String, CaseIterable, Codable {
 
     var defaultModel: String {
         switch self {
-        case .openAI: return "gpt-5-mini"
-        case .anthropic: return "claude-sonnet-4-5"
-        case .openRouter: return "openai/gpt-5-mini"
+        case .openAI: return "gpt-5.6-luna"
+        case .anthropic: return "claude-haiku-4-5"
+        case .openRouter: return "openai/gpt-5.6-luna"
         case .custom: return ""
         }
     }
@@ -81,9 +81,9 @@ struct AIProviderConfiguration: Codable, Equatable {
 
     static var defaultConfiguration: AIProviderConfiguration {
         AIProviderConfiguration(
-            provider: .custom,
-            baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
-            model: "gemini-3-flash-preview"
+            provider: .openAI,
+            baseURL: AIProviderID.openAI.defaultBaseURL,
+            model: AIProviderID.openAI.defaultModel
         )
     }
 
@@ -525,16 +525,24 @@ protocol AICredentialStoring {
 
 final class KeychainAICredentialStore: AICredentialStoring {
     static let shared = KeychainAICredentialStore()
-    private let service = "com.giyyapan.snipshot.ai"
+    static let service = "com.giyyapan.snipshot.ai"
 
-    func read(provider: AIProviderID) -> String {
-        let query: [String: Any] = [
+    /// Snipshot is distributed as a non-sandboxed Developer ID app without
+    /// a provisioning profile, so it intentionally uses the user's login
+    /// keychain. The data-protection keychain requires a provisioned access
+    /// group and otherwise fails with errSecMissingEntitlement (-34018).
+    static func itemQuery(provider: AIProviderID) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: provider.rawValue,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecAttrAccount as String: provider.rawValue
         ]
+    }
+
+    func read(provider: AIProviderID) -> String {
+        var query = Self.itemQuery(provider: provider)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data,
@@ -544,30 +552,29 @@ final class KeychainAICredentialStore: AICredentialStoring {
 
     func write(_ key: String, provider: AIProviderID) throws {
         if key.isEmpty { delete(provider: provider); return }
-        let accountQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: provider.rawValue
-        ]
+        let accountQuery = Self.itemQuery(provider: provider)
         let data = Data(key.utf8)
         let status = SecItemUpdate(accountQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             var insert = accountQuery
             insert[kSecValueData as String] = data
+            insert[kSecAttrLabel as String] = "Snipshot \(provider.displayName) API Key"
             let insertStatus = SecItemAdd(insert as CFDictionary, nil)
-            guard insertStatus == errSecSuccess else { throw AIProviderError.invalidConfiguration("Could not save the API key to Keychain (\(insertStatus)).") }
+            guard insertStatus == errSecSuccess else {
+                throw keychainError(action: "save", status: insertStatus)
+            }
         } else if status != errSecSuccess {
-            throw AIProviderError.invalidConfiguration("Could not update the API key in Keychain (\(status)).")
+            throw keychainError(action: "update", status: status)
         }
     }
 
     func delete(provider: AIProviderID) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: provider.rawValue
-        ]
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete(Self.itemQuery(provider: provider) as CFDictionary)
+    }
+
+    private func keychainError(action: String, status: OSStatus) -> AIProviderError {
+        let systemMessage = SecCopyErrorMessageString(status, nil) as String? ?? "Unknown Keychain error"
+        return .invalidConfiguration("Could not \(action) the API key in macOS Keychain: \(systemMessage) (\(status)).")
     }
 }
 

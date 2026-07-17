@@ -102,6 +102,11 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
         self.titlebarAppearsTransparent = true
         self.delegate = self
 
+        // This window uses the same fixed light result surface as
+        // AIResultWindow. Keep AppKit header controls on the matching Aqua
+        // palette so they remain legible while macOS is in Dark Mode.
+        self.appearance = NSAppearance(named: .aqua)
+
         self.standardWindowButton(.closeButton)?.isHidden = true
         self.standardWindowButton(.miniaturizeButton)?.isHidden = true
         self.standardWindowButton(.zoomButton)?.isHidden = true

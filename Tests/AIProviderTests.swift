@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 private enum TestFailure: Error, CustomStringConvertible {
     case message(String)
@@ -36,13 +37,28 @@ private final class FailingCredentials: AICredentialStoring {
 struct AIProviderTests {
     static func main() throws {
         try testEndpointJoining()
+        try testProviderDefaultsAndKeychainBackend()
         try testOpenAIResponsesRequest()
         try testAnthropicRequest()
         try testOpenRouterAndCustomRequests()
         try testStreamParsers()
         try testModelAndResponseParsers()
         try testMigration()
-        print("AIProviderTests: 7 passed")
+        print("AIProviderTests: 8 passed")
+    }
+
+    private static func testProviderDefaultsAndKeychainBackend() throws {
+        try expect(AIProviderID.openAI.defaultModel == "gpt-5.6-luna", "OpenAI default is not the current lightweight generation")
+        try expect(AIProviderID.anthropic.defaultModel == "claude-haiku-4-5", "Anthropic default is not the current lightweight model")
+        try expect(AIProviderID.openRouter.defaultModel == "openai/gpt-5.6-luna", "OpenRouter default is not the current lightweight generation")
+        let defaultConfiguration = AIProviderConfiguration.defaultConfiguration
+        try expect(defaultConfiguration.provider == .openAI, "Fresh installs should start with a mainstream provider")
+        try expect(defaultConfiguration.model == AIProviderID.openAI.defaultModel, "Fresh-install model and provider default diverged")
+
+        let keychainQuery = KeychainAICredentialStore.itemQuery(provider: .openAI)
+        try expect(keychainQuery[kSecAttrService as String] as? String == KeychainAICredentialStore.service, "Keychain service is unstable")
+        try expect(keychainQuery[kSecAttrAccount as String] as? String == AIProviderID.openAI.rawValue, "Provider credentials are not isolated")
+        try expect(keychainQuery[kSecUseDataProtectionKeychain as String] == nil, "Unprovisioned Developer ID builds cannot use the data-protection keychain")
     }
 
     private static func testEndpointJoining() throws {

@@ -2,7 +2,7 @@ import Cocoa
 import Carbon.HIToolbox
 import ServiceManagement
 
-let kSnipshotVersion = "0.8.1"
+let kSnipshotVersion = "0.8.2"
 
 // MARK: - Hotkey Configuration
 
@@ -74,7 +74,12 @@ class SettingsWindow: NSWindow {
     private var aiTestButton: NSButton!
     private var aiTestStatusLabel: NSTextField!
     private var aiSaveButton: NSButton!
-    private var aiSaveStatusLabel: NSTextField!
+    private var aiAdvancedViews: [NSView] = []
+    private var aiModelTopBuiltInConstraint: NSLayoutConstraint!
+    private var aiModelTopCustomConstraint: NSLayoutConstraint!
+    private var aiModelFieldHeightConstraint: NSLayoutConstraint!
+    private var aiModelStatusBelowPopupConstraint: NSLayoutConstraint!
+    private var aiModelStatusBelowFieldConstraint: NSLayoutConstraint!
 
     // Translation section
     private var translateLanguagePopup: NSPopUpButton!
@@ -437,7 +442,7 @@ class SettingsWindow: NSWindow {
         aiStatusLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(aiStatusLabel)
 
-        aiDescriptionLabel = NSTextField(wrappingLabelWithString: "Choose a provider, load its available models, then test the same request path used by AI features.")
+        aiDescriptionLabel = NSTextField(wrappingLabelWithString: "Choose a provider, paste a key, and save. Snipshot verifies the same request path used for translation.")
         aiDescriptionLabel.font = .systemFont(ofSize: 11, weight: .regular)
         aiDescriptionLabel.textColor = .secondaryLabelColor
         aiDescriptionLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -544,7 +549,7 @@ class SettingsWindow: NSWindow {
         container.addSubview(modelLabel)
 
         aiModelPopup = NSPopUpButton()
-        aiModelPopup.addItem(withTitle: "Load models or enter one manually")
+        aiModelPopup.addItem(withTitle: AISettings.model)
         aiModelPopup.target = self
         aiModelPopup.action = #selector(aiModelSelected)
         aiModelPopup.translatesAutoresizingMaskIntoConstraints = false
@@ -557,7 +562,7 @@ class SettingsWindow: NSWindow {
         container.addSubview(aiRefreshModelsButton)
 
         aiModelField = NSTextField()
-        aiModelField.placeholderString = "Manual model ID (always available as fallback)"
+        aiModelField.placeholderString = "Enter a model ID"
         aiModelField.font = .systemFont(ofSize: 12)
         aiModelField.translatesAutoresizingMaskIntoConstraints = false
         aiModelField.stringValue = AISettings.model
@@ -569,8 +574,8 @@ class SettingsWindow: NSWindow {
         aiModelStatusLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(aiModelStatusLabel)
 
-        // Button row: Test Connection (left) + Save (right, disabled by default)
-        aiTestButton = NSButton(title: "Test Connection", target: self, action: #selector(testAIConnection))
+        // Button row: optional test-only action + primary Save & Test action.
+        aiTestButton = NSButton(title: "Test Only", target: self, action: #selector(testAIConnection))
         aiTestButton.bezelStyle = .rounded
         aiTestButton.controlSize = .small
         aiTestButton.font = .systemFont(ofSize: 11)
@@ -584,7 +589,7 @@ class SettingsWindow: NSWindow {
         aiTestStatusLabel.lineBreakMode = .byTruncatingTail
         container.addSubview(aiTestStatusLabel)
 
-        aiSaveButton = NSButton(title: "Save", target: self, action: #selector(saveAIConfigTapped))
+        aiSaveButton = NSButton(title: "Save & Test", target: self, action: #selector(saveAIConfigTapped))
         aiSaveButton.bezelStyle = .rounded
         aiSaveButton.controlSize = .small
         aiSaveButton.font = .systemFont(ofSize: 11)
@@ -592,11 +597,17 @@ class SettingsWindow: NSWindow {
         aiSaveButton.isEnabled = false
         container.addSubview(aiSaveButton)
 
-        aiSaveStatusLabel = NSTextField(labelWithString: "")
-        aiSaveStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        aiSaveStatusLabel.textColor = .systemGreen
-        aiSaveStatusLabel.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(aiSaveStatusLabel)
+        aiAdvancedViews = [
+            endpointLabel, aiEndpointField,
+            customAuthLabel, aiCustomAuthPopup, aiCustomHeaderField,
+            tokenLabel, aiCustomTokenPopup, aiAllowInsecureCheckbox,
+        ]
+
+        aiModelTopBuiltInConstraint = modelLabel.topAnchor.constraint(equalTo: apiKeyLabel.bottomAnchor, constant: fieldGap + 4)
+        aiModelTopCustomConstraint = modelLabel.topAnchor.constraint(equalTo: tokenLabel.bottomAnchor, constant: fieldGap + 4)
+        aiModelFieldHeightConstraint = aiModelField.heightAnchor.constraint(equalToConstant: 0)
+        aiModelStatusBelowPopupConstraint = aiModelStatusLabel.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: 4)
+        aiModelStatusBelowFieldConstraint = aiModelStatusLabel.topAnchor.constraint(equalTo: aiModelField.bottomAnchor, constant: 2)
 
         // Register for text field editing notifications (dirty tracking)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
@@ -808,8 +819,8 @@ class SettingsWindow: NSWindow {
             aiAllowInsecureCheckbox.centerYAnchor.constraint(equalTo: tokenLabel.centerYAnchor),
             aiAllowInsecureCheckbox.leadingAnchor.constraint(equalTo: aiCustomTokenPopup.trailingAnchor, constant: 8),
 
-            // Model row
-            modelLabel.topAnchor.constraint(equalTo: tokenLabel.bottomAnchor, constant: fieldGap + 4),
+            // Model row. Its top anchor switches between the compact built-in
+            // layout and expanded Custom-provider layout.
             modelLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
             modelLabel.widthAnchor.constraint(equalToConstant: configLabelWidth),
 
@@ -823,25 +834,21 @@ class SettingsWindow: NSWindow {
             aiModelField.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: fieldGap),
             aiModelField.leadingAnchor.constraint(equalTo: modelLabel.trailingAnchor, constant: 8),
             aiModelField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
-            aiModelField.heightAnchor.constraint(equalToConstant: 24),
+            aiModelFieldHeightConstraint,
 
-            aiModelStatusLabel.topAnchor.constraint(equalTo: aiModelField.bottomAnchor, constant: 2),
             aiModelStatusLabel.leadingAnchor.constraint(equalTo: aiModelField.leadingAnchor),
             aiModelStatusLabel.trailingAnchor.constraint(equalTo: aiModelField.trailingAnchor),
 
-            // Button row: Test Connection (left) + status | Save + status (right)
+            // Button row: test-only action + one unified status + primary action.
             aiTestButton.topAnchor.constraint(equalTo: aiModelStatusLabel.bottomAnchor, constant: itemGap + 2),
             aiTestButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: margin),
 
             aiTestStatusLabel.centerYAnchor.constraint(equalTo: aiTestButton.centerYAnchor),
             aiTestStatusLabel.leadingAnchor.constraint(equalTo: aiTestButton.trailingAnchor, constant: 8),
-            aiTestStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: aiSaveStatusLabel.leadingAnchor, constant: -8),
+            aiTestStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: aiSaveButton.leadingAnchor, constant: -8),
 
             aiSaveButton.centerYAnchor.constraint(equalTo: aiTestButton.centerYAnchor),
             aiSaveButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
-
-            aiSaveStatusLabel.centerYAnchor.constraint(equalTo: aiSaveButton.centerYAnchor),
-            aiSaveStatusLabel.trailingAnchor.constraint(equalTo: aiSaveButton.leadingAnchor, constant: -6),
 
             // Separator
             separator1.topAnchor.constraint(equalTo: aiTestButton.bottomAnchor, constant: sectionGap),
@@ -1047,9 +1054,12 @@ class SettingsWindow: NSWindow {
     }
 
     private func markAIConfigDirty() {
+        aiTestStatusLabel.stringValue = ""
         guard !aiConfigDirty else { return }
         aiConfigDirty = true
         aiSaveButton.isEnabled = true
+        aiStatusLabel.stringValue = "Unsaved Changes"
+        aiStatusLabel.textColor = .systemOrange
     }
 
     private var selectedProvider: AIProviderID {
@@ -1068,19 +1078,11 @@ class SettingsWindow: NSWindow {
         )
     }
 
-    @discardableResult
-    private func saveAIFields() -> Bool {
-        do {
-            try AISettings.save(configuration: draftAIConfiguration(), apiKey: aiApiKeyField.stringValue)
-            updateAIStatus()
-            aiConfigDirty = false
-            aiSaveButton.isEnabled = false
-            return true
-        } catch {
-            aiSaveStatusLabel.stringValue = error.localizedDescription
-            aiSaveStatusLabel.textColor = .systemRed
-            return false
-        }
+    private func saveAIFields(configuration: AIProviderConfiguration, apiKey: String) throws {
+        try AISettings.save(configuration: configuration, apiKey: apiKey)
+        updateAIStatus()
+        aiConfigDirty = false
+        aiSaveButton.isEnabled = false
     }
 
     @objc private func aiProviderChanged() {
@@ -1100,9 +1102,14 @@ class SettingsWindow: NSWindow {
     }
 
     @objc private func aiModelSelected() {
-        let index = aiModelPopup.indexOfSelectedItem
-        guard index >= 0, index < aiModels.count else { return }
-        aiModelField.stringValue = aiModels[index].id
+        guard let modelID = aiModelPopup.selectedItem?.representedObject as? String else { return }
+        if modelID == "__manual__" {
+            setManualModelEntryVisible(true)
+            makeFirstResponder(aiModelField)
+            return
+        }
+        aiModelField.stringValue = modelID
+        setManualModelEntryVisible(false)
         markAIConfigDirty()
     }
 
@@ -1110,15 +1117,19 @@ class SettingsWindow: NSWindow {
         let provider = selectedProvider
         let isCustom = provider == .custom
         aiDescriptionLabel.stringValue = isCustom
-            ? "Custom supports the OpenAI Chat Completions protocol with bounded authentication and token-limit options."
-            : "Uses \(provider.displayName)'s native authentication, model listing, request format, and streaming protocol."
+            ? "Use any OpenAI-compatible endpoint and configure its protocol options below."
+            : "\(provider.displayName) · API key stored in macOS Keychain · default: \(provider.defaultModel)"
         aiKeyHelpButton.isHidden = provider.helpURL == nil
-        aiEndpointField.isEditable = isCustom
-        aiEndpointField.textColor = isCustom ? .labelColor : .secondaryLabelColor
-        aiCustomAuthPopup.isEnabled = isCustom
+        aiAdvancedViews.forEach { $0.isHidden = !isCustom }
+        aiModelTopBuiltInConstraint.isActive = false
+        aiModelTopCustomConstraint.isActive = false
+        (isCustom ? aiModelTopCustomConstraint : aiModelTopBuiltInConstraint).isActive = true
+        aiEndpointField.isEditable = true
+        aiEndpointField.textColor = .labelColor
+        aiCustomAuthPopup.isEnabled = true
         aiCustomHeaderField.isEnabled = isCustom && AICustomAuthMode.allCases[max(0, aiCustomAuthPopup.indexOfSelectedItem)] == .apiKeyHeader
-        aiCustomTokenPopup.isEnabled = isCustom
-        aiAllowInsecureCheckbox.isEnabled = isCustom
+        aiCustomTokenPopup.isEnabled = true
+        aiAllowInsecureCheckbox.isEnabled = true
         aiApiKeyField.placeholderString = isCustom && AICustomAuthMode.allCases[max(0, aiCustomAuthPopup.indexOfSelectedItem)] == .none
             ? "Optional for unauthenticated localhost endpoints" : "Stored securely in macOS Keychain"
         if loadCachedModels { loadCachedModelsForSelectedProvider() }
@@ -1135,31 +1146,53 @@ class SettingsWindow: NSWindow {
         let provider = selectedProvider
         guard let data = UserDefaults.standard.data(forKey: modelCacheKey(for: provider)),
               let models = try? JSONDecoder().decode([AIModelDescriptor].self, from: data), !models.isEmpty else {
-            rebuildModelPopup(models: [], status: "Models have not been loaded. Manual model entry remains available.")
+            rebuildModelPopup(models: [], status: "Using the recommended default. Refresh to browse all available models.")
             return
         }
         let date = UserDefaults.standard.object(forKey: modelCacheDateKey(for: provider)) as? Date
         let age = date.map { Date().timeIntervalSince($0) }
         let stale = age == nil || age! > 24 * 60 * 60
-        rebuildModelPopup(models: models, status: stale ? "Showing stale cached models. Refresh recommended." : "Showing cached models. Use Refresh for the latest list.")
+        rebuildModelPopup(models: models, status: stale ? "Cached model list may be stale · Refresh to update." : "Using cached model list · Refresh to update.")
     }
 
     private func rebuildModelPopup(models: [AIModelDescriptor], status: String) {
         aiModels = models
         aiModelPopup.removeAllItems()
-        if models.isEmpty {
-            aiModelPopup.addItem(withTitle: "No loaded models")
-            aiModelPopup.isEnabled = false
+        let currentModel = aiModelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var displayedModels = models
+        if !currentModel.isEmpty && !displayedModels.contains(where: { $0.id == currentModel }) {
+            displayedModels.insert(
+                AIModelDescriptor(id: currentModel, displayName: models.isEmpty ? "\(currentModel) · recommended" : currentModel),
+                at: 0
+            )
+        }
+        for model in displayedModels {
+            let vision = model.supportsImages == true ? " · vision" : ""
+            aiModelPopup.addItem(withTitle: "\(model.displayName)\(vision)")
+            aiModelPopup.lastItem?.representedObject = model.id
+        }
+        aiModelPopup.menu?.addItem(.separator())
+        aiModelPopup.addItem(withTitle: "Enter model ID manually…")
+        aiModelPopup.lastItem?.representedObject = "__manual__"
+        aiModelPopup.isEnabled = true
+
+        if let matchingItem = aiModelPopup.itemArray.first(where: { ($0.representedObject as? String) == currentModel }) {
+            aiModelPopup.select(matchingItem)
+            setManualModelEntryVisible(false)
         } else {
-            aiModelPopup.addItems(withTitles: models.map { model in
-                let vision = model.supportsImages == true ? " · vision" : ""
-                return "\(model.displayName)\(vision)"
-            })
-            aiModelPopup.isEnabled = true
-            if let index = models.firstIndex(where: { $0.id == aiModelField.stringValue }) { aiModelPopup.selectItem(at: index) }
+            aiModelPopup.select(aiModelPopup.lastItem)
+            setManualModelEntryVisible(true)
         }
         aiModelStatusLabel.stringValue = status
         aiModelStatusLabel.textColor = .secondaryLabelColor
+    }
+
+    private func setManualModelEntryVisible(_ visible: Bool) {
+        aiModelField.isHidden = !visible
+        aiModelFieldHeightConstraint.constant = visible ? 24 : 0
+        aiModelStatusBelowPopupConstraint.isActive = false
+        aiModelStatusBelowFieldConstraint.isActive = false
+        (visible ? aiModelStatusBelowFieldConstraint : aiModelStatusBelowPopupConstraint).isActive = true
     }
 
     @objc private func refreshAIModels() {
@@ -1176,15 +1209,15 @@ class SettingsWindow: NSWindow {
             self.aiRefreshModelsButton.isEnabled = true
             switch result {
             case .success(let models):
-                let status = models.isEmpty ? "The provider returned an empty model list. Manual entry remains available." : "Loaded \(models.count) models."
+                let status = models.isEmpty ? "No models returned · manual entry is still available." : "\(models.count) models available."
                 self.rebuildModelPopup(models: models, status: status)
                 if let data = try? JSONEncoder().encode(models) {
                     UserDefaults.standard.set(data, forKey: self.modelCacheKey(for: requestedProvider))
                     UserDefaults.standard.set(Date(), forKey: self.modelCacheDateKey(for: requestedProvider))
                 }
             case .failure(let error):
-                self.aiModelPopup.isEnabled = !self.aiModels.isEmpty
-                self.aiModelStatusLabel.stringValue = error.localizedDescription + " Manual model entry remains available."
+                self.aiModelPopup.isEnabled = true
+                self.aiModelStatusLabel.stringValue = error.localizedDescription + " You can still enter a model ID manually."
                 self.aiModelStatusLabel.textColor = .systemRed
             }
         }
@@ -1193,17 +1226,43 @@ class SettingsWindow: NSWindow {
     // MARK: - AI Test Connection
 
     @objc private func testAIConnection() {
+        runAIConnectionTest(saveOnSuccess: false)
+    }
+
+    private func runAIConnectionTest(saveOnSuccess: Bool) {
+        let testedConfiguration = draftAIConfiguration()
+        let testedAPIKey = aiApiKeyField.stringValue
         aiTestButton.isEnabled = false
+        aiSaveButton.isEnabled = false
         aiTestStatusLabel.stringValue = "Testing..."
         aiTestStatusLabel.textColor = .secondaryLabelColor
 
-        AIService.shared.testConnection(configuration: draftAIConfiguration(), apiKey: aiApiKeyField.stringValue) { [weak self] errorMessage in
+        AIService.shared.testConnection(configuration: testedConfiguration, apiKey: testedAPIKey) { [weak self] errorMessage in
             guard let self = self else { return }
             self.aiTestButton.isEnabled = true
+            self.aiSaveButton.isEnabled = self.aiConfigDirty
+
+            guard self.draftAIConfiguration() == testedConfiguration,
+                  self.aiApiKeyField.stringValue == testedAPIKey else {
+                self.aiTestStatusLabel.stringValue = "Settings changed · test again"
+                self.aiTestStatusLabel.textColor = .systemOrange
+                return
+            }
 
             if let error = errorMessage {
                 self.aiTestStatusLabel.stringValue = error
                 self.aiTestStatusLabel.textColor = .systemRed
+            } else if saveOnSuccess {
+                do {
+                    try self.saveAIFields(configuration: testedConfiguration, apiKey: testedAPIKey)
+                    self.aiTestStatusLabel.stringValue = "Saved and verified"
+                    self.aiTestStatusLabel.textColor = .systemGreen
+                    logMessage("AI configuration saved for \(self.selectedProvider.displayName)")
+                } catch {
+                    self.aiSaveButton.isEnabled = true
+                    self.aiTestStatusLabel.stringValue = error.localizedDescription
+                    self.aiTestStatusLabel.textColor = .systemRed
+                }
             } else {
                 self.aiTestStatusLabel.stringValue = "Connection successful"
                 self.aiTestStatusLabel.textColor = .systemGreen
@@ -1353,11 +1412,7 @@ class SettingsWindow: NSWindow {
     // MARK: - Save Actions
 
     @objc private func saveAIConfigTapped() {
-        if saveAIFields() {
-            aiSaveStatusLabel.textColor = .systemGreen
-            showTransientFeedback(label: aiSaveStatusLabel, message: "Saved")
-            logMessage("AI configuration saved for \(selectedProvider.displayName)")
-        }
+        runAIConnectionTest(saveOnSuccess: true)
     }
 
     @objc private func saveTranslatePromptTapped() {

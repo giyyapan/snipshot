@@ -97,6 +97,11 @@ class AIResultWindow: NSPanel, NSWindowDelegate {
         self.minSize = NSSize(width: 250, height: 180)
         self.delegate = self
 
+        // The result surface and WebView CSS intentionally use a light
+        // palette. Pin the AppKit controls to Aqua as well so semantic label
+        // and symbol colors do not turn white when the system is in Dark Mode.
+        self.appearance = NSAppearance(named: .aqua)
+
         self.standardWindowButton(.closeButton)?.isHidden = true
         self.standardWindowButton(.miniaturizeButton)?.isHidden = true
         self.standardWindowButton(.zoomButton)?.isHidden = true
