@@ -17,7 +17,7 @@ private enum AnnotationTests {
         try test("line and circle render as unfilled strokes", testLineAndCircleRendering)
         try test("highlight renders a stronger outside dim and lighter focus", testHighlightRendering)
         try test("glow style is shared, scoped, and scales with stroke width", testGlowStyleAndBounds)
-        try test("all four vector tools render a restrained edge glow", testVectorGlowRendering)
+        try test("vector and marker tools render a clear edge glow", testVectorGlowRendering)
         try test("glow preserves the sharp vector body color and alpha", testGlowPreservesBodyColorAndAlpha)
         try test("overlay and export share rendering without exporting selection UI", testOverlayAndExportRendering)
         try test("vector glow clips safely at screenshot edges", testGlowAtScreenshotEdges)
@@ -180,12 +180,12 @@ private enum AnnotationTests {
     }
 
     private static func testGlowStyleAndBounds() throws {
-        let vectorTools: [AnnotationTool] = [.arrow, .line, .rectangle, .circle]
+        let vectorTools: [AnnotationTool] = [.arrow, .line, .rectangle, .circle, .marker]
         for tool in vectorTools {
             try expect(AnnotationGlowStyle.style(for: tool, strokeWidth: 3) != nil, "\(tool) did not opt into the shared glow style")
         }
 
-        for tool in [AnnotationTool.select, .text, .marker, .mosaic, .highlight] {
+        for tool in [AnnotationTool.select, .text, .mosaic, .highlight] {
             try expect(AnnotationGlowStyle.style(for: tool, strokeWidth: 3) == nil, "\(tool) unexpectedly opted into vector glow")
         }
 
@@ -193,7 +193,8 @@ private enum AnnotationTests {
         let thick = try requireGlowStyle(for: .line, strokeWidth: 12)
         try expect(thick.blurRadius > thin.blurRadius, "glow radius did not scale with stroke width")
         try expect(thick.opacity > thin.opacity, "glow intensity did not scale with stroke width")
-        try expect(thick.opacity <= 0.40, "glow opacity is no longer restrained")
+        try expect(thin.opacity >= 0.40, "glow baseline became too weak")
+        try expect(thick.opacity <= 0.52, "glow opacity is no longer restrained")
 
         let rectangle = element(.rectangle, from: NSPoint(x: 20, y: 20), to: NSPoint(x: 80, y: 60), strokeWidth: 4)
         let rectangleStyle = try requireGlowStyle(for: .rectangle, strokeWidth: rectangle.strokeWidth)
@@ -207,6 +208,12 @@ private enum AnnotationTests {
         }
         try expect(shortThickArrow.boundingRect.contains(arrowDrawingBounds), "short Arrow bounds clip its head or glow")
 
+        let marker = element(.marker, from: NSPoint(x: 50, y: 50), to: NSPoint(x: 50, y: 50), strokeWidth: 8)
+        guard let markerDrawingBounds = AnnotationRenderer.vectorDrawingBounds(for: marker) else {
+            throw AnnotationTestFailure(message: "could not calculate Marker drawing bounds")
+        }
+        try expect(marker.boundingRect.contains(markerDrawingBounds), "Marker bounds clip its glow")
+
         let mosaic = element(.mosaic, from: NSPoint(x: 20, y: 20), to: NSPoint(x: 80, y: 60), strokeWidth: 4)
         try expect(mosaic.boundingRect == mosaic.normalizedRect.insetBy(dx: -4, dy: -4), "non-glowing Mosaic bounds changed")
     }
@@ -217,11 +224,14 @@ private enum AnnotationTests {
             (.arrow, NSPoint(x: 25, y: 50), NSPoint(x: 95, y: 50), NSPoint(x: 55, y: 50), NSPoint(x: 55, y: 54)),
             (.line, NSPoint(x: 25, y: 50), NSPoint(x: 95, y: 50), NSPoint(x: 55, y: 50), NSPoint(x: 55, y: 54)),
             (.rectangle, NSPoint(x: 25, y: 20), NSPoint(x: 95, y: 80), NSPoint(x: 55, y: 20), NSPoint(x: 55, y: 16)),
-            (.circle, NSPoint(x: 25, y: 20), NSPoint(x: 95, y: 80), NSPoint(x: 60, y: 80), NSPoint(x: 60, y: 84))
+            (.circle, NSPoint(x: 25, y: 20), NSPoint(x: 95, y: 80), NSPoint(x: 60, y: 80), NSPoint(x: 60, y: 84)),
+            (.marker, NSPoint(x: 60, y: 50), NSPoint(x: 60, y: 50), NSPoint(x: 60, y: 50), NSPoint(x: 75, y: 50))
         ]
 
         for (tool, start, end, bodyPoint, glowPoint) in samples {
-            let annotation = element(tool, from: start, to: end, strokeWidth: 4)
+            let strokeWidth: CGFloat = tool == .marker ? 8 : 4
+            let annotation = element(tool, from: start, to: end, strokeWidth: strokeWidth)
+            annotation.markerNumber = 1
             annotation.color = .systemRed
             let rendered = renderExport(annotation, size: size)
             let body = try color(in: rendered, at: bodyPoint)

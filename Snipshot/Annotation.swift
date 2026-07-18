@@ -71,7 +71,7 @@ enum AnnotationTool: String, CaseIterable {
     }
 }
 
-// MARK: - Vector Annotation Glow
+// MARK: - Annotation Glow
 struct AnnotationGlowStyle: Equatable {
     let opacity: CGFloat
     let blurRadius: CGFloat
@@ -81,12 +81,12 @@ struct AnnotationGlowStyle: Equatable {
     var drawingOutset: CGFloat { ceil(blurRadius * 2) }
 
     static func style(for tool: AnnotationTool, strokeWidth: CGFloat) -> AnnotationGlowStyle? {
-        guard [.arrow, .line, .rectangle, .circle].contains(tool) else { return nil }
+        guard [.arrow, .line, .rectangle, .circle, .marker].contains(tool) else { return nil }
 
         let width = min(20, max(1, strokeWidth))
         return AnnotationGlowStyle(
-            opacity: min(0.40, 0.30 + width * 0.005),
-            blurRadius: min(6, 2.5 + width * 0.2)
+            opacity: min(0.52, 0.40 + width * 0.006),
+            blurRadius: min(7, 3.0 + width * 0.22)
         )
     }
 }
@@ -319,7 +319,9 @@ class AnnotationElement {
             return textBoundingRect
         case .marker:
             let radius = max(strokeWidth * 1.5, 6)
-            return NSRect(x: startPoint.x - radius, y: startPoint.y - radius, width: radius * 2, height: radius * 2)
+            let interactionBounds = NSRect(x: startPoint.x - radius, y: startPoint.y - radius, width: radius * 2, height: radius * 2)
+            guard let drawingBounds = AnnotationRenderer.vectorDrawingBounds(for: self) else { return interactionBounds }
+            return interactionBounds.union(drawingBounds)
         }
     }
 
@@ -847,6 +849,11 @@ class AnnotationRenderer {
                 lineJoin: .round,
                 miterLimit: 10
             )
+        case .marker:
+            let center = NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy)
+            let radius = max(element.strokeWidth * 1.5, 6)
+            let rect = NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            return CGPath(ellipseIn: rect, transform: nil)
         default:
             return nil
         }
@@ -968,9 +975,8 @@ class AnnotationRenderer {
         let radius = max(element.strokeWidth * 1.5, 6)
 
         let circleRect = NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-        let circlePath = NSBezierPath(ovalIn: circleRect)
-        element.color.setFill()
-        circlePath.fill()
+        let circlePath = CGPath(ellipseIn: circleRect, transform: nil)
+        drawGlowingVector(silhouette: circlePath, element: element, ctx: ctx)
 
         let numStr = "\(element.markerNumber)" as NSString
         let fontSize = radius * 1.2
