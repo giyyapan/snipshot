@@ -657,10 +657,16 @@ class SettingsWindow: NSWindow {
         translatePromptView = NSScrollView()
         translatePromptView.hasVerticalScroller = true
         translatePromptView.borderType = .bezelBorder
+        translatePromptView.drawsBackground = true
+        translatePromptView.backgroundColor = .textBackgroundColor
         translatePromptView.translatesAutoresizingMaskIntoConstraints = false
 
         translatePromptTextView = NSTextView()
         translatePromptTextView.font = .systemFont(ofSize: 11)
+        translatePromptTextView.textColor = .textColor
+        translatePromptTextView.backgroundColor = .textBackgroundColor
+        translatePromptTextView.insertionPointColor = .textColor
+        translatePromptTextView.drawsBackground = true
         translatePromptTextView.isRichText = false
         translatePromptTextView.isAutomaticQuoteSubstitutionEnabled = false
         translatePromptTextView.isAutomaticDashSubstitutionEnabled = false
@@ -716,10 +722,16 @@ class SettingsWindow: NSWindow {
         ocrRefinePromptView = NSScrollView()
         ocrRefinePromptView.hasVerticalScroller = true
         ocrRefinePromptView.borderType = .bezelBorder
+        ocrRefinePromptView.drawsBackground = true
+        ocrRefinePromptView.backgroundColor = .textBackgroundColor
         ocrRefinePromptView.translatesAutoresizingMaskIntoConstraints = false
 
         ocrRefinePromptTextView = NSTextView()
         ocrRefinePromptTextView.font = .systemFont(ofSize: 11)
+        ocrRefinePromptTextView.textColor = .textColor
+        ocrRefinePromptTextView.backgroundColor = .textBackgroundColor
+        ocrRefinePromptTextView.insertionPointColor = .textColor
+        ocrRefinePromptTextView.drawsBackground = true
         ocrRefinePromptTextView.isRichText = false
         ocrRefinePromptTextView.isAutomaticQuoteSubstitutionEnabled = false
         ocrRefinePromptTextView.isAutomaticDashSubstitutionEnabled = false
