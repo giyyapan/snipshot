@@ -399,6 +399,31 @@ class SettingsWindow: NSWindow {
 
     // MARK: - AI Tab
 
+    private func makePromptEditor(text: String) -> (scrollView: NSScrollView, textView: NSTextView) {
+        let scrollView = NSTextView.scrollableTextView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .bezelBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+
+        // scrollableTextView() supplies the correctly sized/resizable document view.
+        // A bare NSTextView() starts at zero size and can leave the prompt invisible.
+        let textView = scrollView.documentView as! NSTextView
+        textView.font = .systemFont(ofSize: 11)
+        textView.textColor = .textColor
+        textView.backgroundColor = .textBackgroundColor
+        textView.insertionPointColor = .textColor
+        textView.drawsBackground = true
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.string = text
+        textView.delegate = self
+        return (scrollView, textView)
+    }
+
     private func buildAITab() -> NSView {
         // Outer scroll view that fills the tab area
         let scrollView = NSScrollView()
@@ -654,28 +679,12 @@ class SettingsWindow: NSWindow {
         promptLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(promptLabel)
 
-        translatePromptView = NSScrollView()
-        translatePromptView.hasVerticalScroller = true
-        translatePromptView.borderType = .bezelBorder
-        translatePromptView.drawsBackground = true
-        translatePromptView.backgroundColor = .textBackgroundColor
-        translatePromptView.translatesAutoresizingMaskIntoConstraints = false
-
-        translatePromptTextView = NSTextView()
-        translatePromptTextView.font = .systemFont(ofSize: 11)
-        translatePromptTextView.textColor = .textColor
-        translatePromptTextView.backgroundColor = .textBackgroundColor
-        translatePromptTextView.insertionPointColor = .textColor
-        translatePromptTextView.drawsBackground = true
-        translatePromptTextView.isRichText = false
-        translatePromptTextView.isAutomaticQuoteSubstitutionEnabled = false
-        translatePromptTextView.isAutomaticDashSubstitutionEnabled = false
-        translatePromptTextView.textContainerInset = NSSize(width: 4, height: 4)
         let savedPrompt = UserDefaults.standard.string(forKey: TranslateSettings.systemPromptKey)
             ?? TranslateSettings.defaultSystemPrompt
-        translatePromptTextView.string = savedPrompt
-        translatePromptTextView.delegate = self
-        translatePromptView.documentView = translatePromptTextView
+        let translatePromptEditor = makePromptEditor(text: savedPrompt)
+        translatePromptView = translatePromptEditor.scrollView
+        translatePromptTextView = translatePromptEditor.textView
+        translatePromptView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(translatePromptView)
 
         let resetTranslatePromptButton = NSButton(title: "Reset", target: self, action: #selector(resetTranslatePrompt))
@@ -719,28 +728,12 @@ class SettingsWindow: NSWindow {
         ocrPromptLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(ocrPromptLabel)
 
-        ocrRefinePromptView = NSScrollView()
-        ocrRefinePromptView.hasVerticalScroller = true
-        ocrRefinePromptView.borderType = .bezelBorder
-        ocrRefinePromptView.drawsBackground = true
-        ocrRefinePromptView.backgroundColor = .textBackgroundColor
-        ocrRefinePromptView.translatesAutoresizingMaskIntoConstraints = false
-
-        ocrRefinePromptTextView = NSTextView()
-        ocrRefinePromptTextView.font = .systemFont(ofSize: 11)
-        ocrRefinePromptTextView.textColor = .textColor
-        ocrRefinePromptTextView.backgroundColor = .textBackgroundColor
-        ocrRefinePromptTextView.insertionPointColor = .textColor
-        ocrRefinePromptTextView.drawsBackground = true
-        ocrRefinePromptTextView.isRichText = false
-        ocrRefinePromptTextView.isAutomaticQuoteSubstitutionEnabled = false
-        ocrRefinePromptTextView.isAutomaticDashSubstitutionEnabled = false
-        ocrRefinePromptTextView.textContainerInset = NSSize(width: 4, height: 4)
         let savedOCRPrompt = UserDefaults.standard.string(forKey: OCRRefineSettings.systemPromptKey)
             ?? OCRRefineSettings.defaultSystemPrompt
-        ocrRefinePromptTextView.string = savedOCRPrompt
-        ocrRefinePromptTextView.delegate = self
-        ocrRefinePromptView.documentView = ocrRefinePromptTextView
+        let ocrPromptEditor = makePromptEditor(text: savedOCRPrompt)
+        ocrRefinePromptView = ocrPromptEditor.scrollView
+        ocrRefinePromptTextView = ocrPromptEditor.textView
+        ocrRefinePromptView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(ocrRefinePromptView)
 
         let resetOCRPromptButton = NSButton(title: "Reset", target: self, action: #selector(resetOCRRefinePrompt))
