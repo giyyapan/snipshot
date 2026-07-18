@@ -222,6 +222,7 @@ class PinContentView: NSView {
     private weak var parentWindow: PinWindow?
     private var dragOrigin: NSPoint?
     private var windowOriginAtDragStart: NSPoint?
+    private var dragUpdateState = PinDragUpdateState<NSPoint>()
     private var feedbackOverlay: NSView?
 
     // Border colors
@@ -324,12 +325,13 @@ class PinContentView: NSView {
         }
 
         // Record drag start — do NOT makeKey here so drag works without focus
+        dragUpdateState.cancel()
         dragOrigin = NSEvent.mouseLocation
         windowOriginAtDragStart = parentWindow?.frame.origin
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window = parentWindow,
+        guard parentWindow != nil,
               let origin = dragOrigin,
               let windowStart = windowOriginAtDragStart else { return }
 
@@ -341,24 +343,43 @@ class PinContentView: NSView {
             x: windowStart.x + dx,
             y: windowStart.y + dy
         )
-        window.setFrameOrigin(newOrigin)
+        if dragUpdateState.submit(newOrigin) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + pinDragUpdateIntervalSeconds) { [weak self] in
+                self?.applyPendingDragUpdate()
+            }
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
         // If it was a click (not a drag), make key so ESC/Cmd+C and pinch zoom work
-        if let origin = dragOrigin {
+        if let origin = dragOrigin,
+           let windowStart = windowOriginAtDragStart,
+           let window = parentWindow {
             let current = NSEvent.mouseLocation
             let distance = hypot(current.x - origin.x, current.y - origin.y)
             if distance < 3 {
-                parentWindow?.makeKey()
+                window.makeKey()
+            } else {
+                window.setFrameOrigin(NSPoint(
+                    x: windowStart.x + current.x - origin.x,
+                    y: windowStart.y + current.y - origin.y
+                ))
             }
         }
+        dragUpdateState.cancel()
         dragOrigin = nil
         windowOriginAtDragStart = nil
         // Update stable center after drag so zoom anchors at the new position
         if let window = parentWindow {
             window.updateStableCenter()
         }
+    }
+
+    private func applyPendingDragUpdate() {
+        guard let origin = dragUpdateState.takePending(),
+              dragOrigin != nil,
+              let window = parentWindow else { return }
+        window.setFrameOrigin(origin)
     }
 
     override func draw(_ dirtyRect: NSRect) {

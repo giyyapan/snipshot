@@ -14,6 +14,10 @@ private struct TestPlacement: Equatable {
     let scale: Double
 }
 
+private final class TestClock {
+    var time: TimeInterval = 0
+}
+
 @main
 private enum PinRecoveryStateTests {
     private static var testCount = 0
@@ -54,6 +58,31 @@ private enum PinRecoveryStateTests {
             let record = selectedFallbackRecord(of: selection)
             try expect(record?.value == "changed clipboard", "clipboard fallback was not selected")
             try expect(record?.placement == placement(500, 400, scale: 1.0), "clipboard fallback placement changed")
+        }
+
+        try test("each recovery expires five minutes after its own unpin") {
+            try expect(defaultPinRecoveryExpirationInterval == 300, "default expiration is not five minutes")
+            let clock = TestClock()
+            var state = PinRecoveryState<String, TestPlacement>(now: { clock.time })
+
+            state.recordUnpin("older", placement: placement(10, 20, scale: 0.5))
+            clock.time = 240
+            state.recordUnpin("newer", placement: placement(30, 40, scale: 2.0))
+            clock.time = 300
+
+            let recovered = recoveredRecord(of: state.selectImage { fallbackRecord() })
+            try expect(recovered?.value == "newer", "unexpired newer record was not restored")
+            try expect(recovered?.placement == placement(30, 40, scale: 2.0), "newer placement changed")
+            try expect(selectedFallbackRecord(of: state.selectImage { fallbackRecord() }) != nil, "expired older record remained recoverable")
+        }
+
+        try test("record remains recoverable immediately before expiry") {
+            let clock = TestClock()
+            var state = PinRecoveryState<String, TestPlacement>(now: { clock.time })
+            state.recordUnpin("image", placement: placement(10, 20, scale: 1.5))
+            clock.time = defaultPinRecoveryExpirationInterval - 0.001
+
+            try expect(recoveredRecord(of: state.selectImage { nil })?.value == "image", "record expired before five minutes")
         }
 
         try test("capacity evicts only the oldest records") {
