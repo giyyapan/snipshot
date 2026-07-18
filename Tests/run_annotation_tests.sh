@@ -11,6 +11,7 @@ swiftc \
     -sdk "$(xcrun --show-sdk-path)" \
     -framework Cocoa \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
+    "$PROJECT_DIR/Snipshot/UIComponents.swift" \
     "$PROJECT_DIR/Tests/AnnotationTests.swift" \
     -o "$TEST_BINARY"
 

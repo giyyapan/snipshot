@@ -1,5 +1,39 @@
 import Cocoa
 
+// MARK: - Toolbar Menu Layout
+enum ToolbarMenuLayout {
+    static let gap: CGFloat = 6
+    static let margin: CGFloat = 4
+
+    /// Places toolbar menus above their dedicated trigger when possible, then
+    /// below it as a fallback. Both placements leave a visible gap so the menu
+    /// never covers the trigger or the toolbar itself.
+    static func frame(triggerFrame: NSRect, menuSize: NSSize, in bounds: NSRect) -> NSRect {
+        let minX = bounds.minX + margin
+        let maxX = bounds.maxX - margin - menuSize.width
+        let preferredX = triggerFrame.midX - menuSize.width / 2
+        let x = maxX >= minX ? min(max(preferredX, minX), maxX) : minX
+
+        let aboveY = triggerFrame.maxY + gap
+        if aboveY + menuSize.height <= bounds.maxY - margin {
+            return NSRect(origin: NSPoint(x: x, y: aboveY), size: menuSize)
+        }
+
+        let belowY = triggerFrame.minY - gap - menuSize.height
+        if belowY >= bounds.minY + margin {
+            return NSRect(origin: NSPoint(x: x, y: belowY), size: menuSize)
+        }
+
+        // A very small overlay may not fit the menu on either side. Keep it
+        // visible on the side with more room while preserving the trigger gap.
+        let roomAbove = bounds.maxY - triggerFrame.maxY
+        let y = roomAbove >= triggerFrame.minY - bounds.minY
+            ? aboveY
+            : belowY
+        return NSRect(origin: NSPoint(x: x, y: y), size: menuSize)
+    }
+}
+
 // MARK: - Instant Tooltip Window
 private class TooltipWindow: NSWindow {
     init(text: String) {
@@ -38,7 +72,6 @@ private class TooltipWindow: NSWindow {
 class HoverIconButton: NSView {
 
     var onPress: (() -> Void)?
-    var onHover: ((Bool) -> Void)?
     var isActive: Bool = false {
         didSet {
             updateTintColor()
@@ -73,7 +106,7 @@ class HoverIconButton: NSView {
     private var tooltipText: String
     private var tooltipWindow: TooltipWindow?
 
-    init(frame: NSRect, symbolName: String, tooltip: String, pointSize: CGFloat = 12, showsMenuIndicator: Bool = false) {
+    init(frame: NSRect, symbolName: String, tooltip: String, pointSize: CGFloat = 12) {
         self.tooltipText = tooltip
         super.init(frame: frame)
 
@@ -91,17 +124,6 @@ class HoverIconButton: NSView {
         iconView.contentTintColor = normalColor
         iconView.autoresizingMask = [.width, .height]
         addSubview(iconView)
-
-        if showsMenuIndicator {
-            let indicator = NSImageView(frame: NSRect(x: bounds.maxX - 8, y: 2, width: 6, height: 6))
-            let indicatorConfig = NSImage.SymbolConfiguration(pointSize: 5, weight: .bold)
-            indicator.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "More tools")?
-                .withSymbolConfiguration(indicatorConfig)
-            indicator.imageScaling = .scaleProportionallyDown
-            indicator.contentTintColor = NSColor(white: 0.35, alpha: 0.8)
-            indicator.autoresizingMask = [.minXMargin, .maxYMargin]
-            addSubview(indicator)
-        }
 
         let area = NSTrackingArea(
             rect: bounds,
@@ -161,11 +183,7 @@ class HoverIconButton: NSView {
         if !isActive { iconView.contentTintColor = hoverColor }
         NSCursor.arrow.set()
         needsDisplay = true
-        if let onHover {
-            onHover(true)
-        } else {
-            showTooltip()
-        }
+        showTooltip()
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -174,7 +192,6 @@ class HoverIconButton: NSView {
         if !isDisabled && !isActive { iconView.contentTintColor = normalColor }
         needsDisplay = true
         hideTooltip()
-        onHover?(false)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -198,28 +215,35 @@ class HoverIconButton: NSView {
     }
 }
 
-// MARK: - Grouped Tool Menu Item
-class GroupedToolMenuItem: NSView {
+// MARK: - Toolbar Menu Item
+class ToolbarMenuItem: NSView {
     var onPress: (() -> Void)?
     private var isHovered = false
     private var isPressed = false
 
-    init(frame: NSRect, tool: AnnotationTool, isSelected: Bool) {
+    init(
+        frame: NSRect,
+        symbolName: String,
+        title: String,
+        shortcut: String? = nil,
+        isSelected: Bool = false
+    ) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = 4
 
         let icon = NSImageView(frame: NSRect(x: 8, y: (frame.height - 16) / 2, width: 16, height: 16))
-        icon.image = NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.displayName)?
+        icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
         icon.imageScaling = .scaleProportionallyDown
         icon.contentTintColor = NSColor(white: 0.3, alpha: 1)
         addSubview(icon)
 
-        let label = NSTextField(labelWithString: tool.displayName)
+        let trailingWidth: CGFloat = isSelected ? 27 : (shortcut == nil ? 8 : 38)
+        let label = NSTextField(labelWithString: title)
         label.font = NSFont.systemFont(ofSize: 12)
         label.textColor = NSColor(white: 0.25, alpha: 1)
-        label.frame = NSRect(x: 31, y: (frame.height - 16) / 2, width: frame.width - 58, height: 16)
+        label.frame = NSRect(x: 31, y: (frame.height - 16) / 2, width: frame.width - 31 - trailingWidth, height: 16)
         addSubview(label)
 
         if isSelected {
@@ -229,6 +253,13 @@ class GroupedToolMenuItem: NSView {
             checkmark.imageScaling = .scaleProportionallyDown
             checkmark.contentTintColor = .systemBlue
             addSubview(checkmark)
+        } else if let shortcut {
+            let shortcutLabel = NSTextField(labelWithString: shortcut)
+            shortcutLabel.font = NSFont.systemFont(ofSize: 11)
+            shortcutLabel.textColor = .secondaryLabelColor
+            shortcutLabel.alignment = .right
+            shortcutLabel.frame = NSRect(x: frame.width - 38, y: (frame.height - 15) / 2, width: 30, height: 15)
+            addSubview(shortcutLabel)
         }
 
         let area = NSTrackingArea(
@@ -238,6 +269,15 @@ class GroupedToolMenuItem: NSView {
             userInfo: nil
         )
         addTrackingArea(area)
+    }
+
+    convenience init(frame: NSRect, tool: AnnotationTool, isSelected: Bool) {
+        self.init(
+            frame: frame,
+            symbolName: tool.symbolName,
+            title: tool.displayName,
+            isSelected: isSelected
+        )
     }
 
     required init?(coder: NSCoder) { fatalError() }

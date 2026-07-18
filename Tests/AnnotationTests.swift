@@ -10,6 +10,7 @@ private enum AnnotationTests {
 
     static func main() throws {
         try test("toolbar groups stay compact and cycle deterministically", testToolGroupsAndCycling)
+        try test("toolbar menus avoid their dedicated triggers", testToolbarMenuPlacement)
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
         try test("circle geometry only hits the ellipse border", testCircleGeometry)
         try test("circle and highlight resize from four corners", testBoxResizeHandles)
@@ -55,6 +56,26 @@ private enum AnnotationTests {
         state.currentTool = .highlight
         state.currentTool = .select
         try expect(state.rememberedTool(in: [.mosaic, .highlight]) == .highlight, "Select reset the visible group member to Mosaic")
+    }
+
+    private static func testToolbarMenuPlacement() throws {
+        let overlayBounds = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let menuSize = NSSize(width: 190, height: 68)
+
+        let lowerTrigger = NSRect(x: 420, y: 80, width: 12, height: 26)
+        let above = ToolbarMenuLayout.frame(triggerFrame: lowerTrigger, menuSize: menuSize, in: overlayBounds)
+        try expect(above.minY == lowerTrigger.maxY + ToolbarMenuLayout.gap, "toolbar menu did not prefer the space above")
+        try expect(!above.intersects(lowerTrigger), "toolbar menu covered its lower trigger")
+
+        let upperTrigger = NSRect(x: 420, y: 660, width: 12, height: 26)
+        let below = ToolbarMenuLayout.frame(triggerFrame: upperTrigger, menuSize: menuSize, in: overlayBounds)
+        try expect(below.maxY == upperTrigger.minY - ToolbarMenuLayout.gap, "toolbar menu did not fall back below near the top edge")
+        try expect(!below.intersects(upperTrigger), "toolbar menu covered its upper trigger")
+
+        let rightEdgeTrigger = NSRect(x: 888, y: 80, width: 12, height: 26)
+        let clamped = ToolbarMenuLayout.frame(triggerFrame: rightEdgeTrigger, menuSize: menuSize, in: overlayBounds)
+        try expect(clamped.maxX <= overlayBounds.maxX - ToolbarMenuLayout.margin, "toolbar menu escaped the right screen edge")
+        try expect(clamped.minX >= overlayBounds.minX + ToolbarMenuLayout.margin, "toolbar menu escaped the left screen edge")
     }
 
     private static func testLineGeometry() throws {

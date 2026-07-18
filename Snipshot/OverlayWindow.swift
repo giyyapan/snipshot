@@ -118,9 +118,8 @@ class OverlayView: NSView {
     var colorDots: [NSColor: ColorDot] = [:]
     var undoButton: HoverIconButton?
     var redoButton: HoverIconButton?
-    var groupedToolMenuView: NSView?
-    weak var groupedToolMenuTriggerView: NSView?
-    var groupedToolMenuSuppressedGroupKey: AnnotationTool?
+    var toolbarMenuView: NSView?
+    weak var toolbarMenuTriggerView: NSView?
 
     // Annotation dragging
     var annoDragStart: NSPoint = .zero
@@ -411,8 +410,10 @@ class OverlayView: NSView {
     }
 
     func updateToolbarState() {
-        for (tool, btn) in toolButtons {
-            btn.isActive = (annoState.currentTool == tool)
+        for group in AnnotationTool.toolbarGroups {
+            guard let groupKey = group.first,
+                  let button = toolButtons[groupKey] else { continue }
+            button.isActive = group.contains(annoState.currentTool ?? .select)
         }
     }
 
@@ -1182,10 +1183,13 @@ class OverlayView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
 
-        // Clicking outside the non-modal grouped tool menu dismisses it, while
+        // Clicking outside the non-modal toolbar menu dismisses it, while
         // allowing the underlying screenshot interaction to continue normally.
-        if let menu = groupedToolMenuView, !menu.frame.contains(point) {
-            dismissGroupedToolMenu()
+        if let menu = toolbarMenuView {
+            let triggerFrame = toolbarMenuTriggerView.map { $0.convert($0.bounds, to: self) }
+            if !menu.frame.contains(point) && !(triggerFrame?.contains(point) ?? false) {
+                dismissToolbarMenu()
+            }
         }
 
         // Check panels first
@@ -1539,7 +1543,6 @@ class OverlayView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         currentMousePosition = point
-        updateGroupedToolMenuInteraction(at: point)
 
         if isPointInPanel(point) {
             if hoveredHandle != nil { hoveredHandle = nil; needsDisplay = true }

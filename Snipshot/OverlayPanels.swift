@@ -22,10 +22,7 @@ extension OverlayView {
     }
 
     func removeAllPanels() {
-        dismissGroupedToolMenu()
-        // Drop button identity mappings before removing their tracking areas so
-        // a synthetic mouse-exit from an old button cannot clear suppression
-        // that belongs to the rebuilt toolbar button under the same pointer.
+        dismissToolbarMenu()
         toolButtons.removeAll()
         infoPanelView?.removeFromSuperview(); infoPanelView = nil
         bottomBarView?.removeFromSuperview(); bottomBarView = nil
@@ -67,7 +64,7 @@ extension OverlayView {
     }
 
     func isPointInPanel(_ point: NSPoint) -> Bool {
-        for panel in [bottomBarView, infoPanelView, secondaryPanelView, ocrPanelView, groupedToolMenuView] {
+        for panel in [bottomBarView, infoPanelView, secondaryPanelView, ocrPanelView, toolbarMenuView] {
             if let p = panel, p.frame.contains(point) { return true }
         }
         return false
@@ -131,13 +128,15 @@ extension OverlayView {
 
         let toolGroups = AnnotationTool.toolbarGroups
         let toolCount = CGFloat(toolGroups.count)
+        let groupedToolCount = CGFloat(toolGroups.filter { $0.count > 1 }.count)
+        let toolMenuTriggerW: CGFloat = 12
         let undoRedoCount: CGFloat = 2
         let ocrChevronW: CGFloat = 14
         let ocrCount: CGFloat = 2
         let scrollCaptureCount: CGFloat = 1
         let actionCount: CGFloat = 4
 
-        let toolsWidth = toolCount * btnSize + (toolCount - 1) * spacing
+        let toolsWidth = toolCount * btnSize + groupedToolCount * toolMenuTriggerW + (toolCount - 1) * spacing
         let undoRedoWidth = undoRedoCount * btnSize + (undoRedoCount - 1) * spacing
         let ocrWidth = ocrCount * btnSize + (ocrCount - 1) * spacing + ocrChevronW
         let scrollCaptureWidth = scrollCaptureCount * btnSize
@@ -156,46 +155,35 @@ extension OverlayView {
 
         // Tool buttons
         for group in toolGroups {
-            guard let fallbackTool = group.first else { continue }
+            guard !group.isEmpty else { continue }
             let displayedTool = annoState.rememberedTool(in: group)
             let tooltip = group.map(\.displayName).joined(separator: " / ")
             let btn = HoverIconButton(
                 frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize),
                 symbolName: displayedTool.symbolName,
-                tooltip: tooltip,
-                showsMenuIndicator: group.count > 1
+                tooltip: group.count == 1 ? tooltip : displayedTool.displayName
             )
             btn.isActive = group.contains(annoState.currentTool ?? .select)
-            if group.count == 1 {
-                btn.onPress = { [weak self] in self?.selectTool(fallbackTool) }
-            } else {
-                btn.onPress = { [weak self] in
-                    guard let self else { return }
-                    self.groupedToolMenuSuppressedGroupKey = fallbackTool
-                    self.dismissGroupedToolMenu()
-                    self.selectTool(displayedTool)
-                    // `selectTool` rebuilds the toolbar. Re-assert suppression
-                    // after the rebuild in case removing the old tracking area
-                    // emitted mouse-exit while the pointer never actually left.
-                    self.groupedToolMenuSuppressedGroupKey = fallbackTool
-                    self.dismissGroupedToolMenu()
-                }
-                btn.onHover = { [weak self, weak btn] isHovered in
-                    guard let self else { return }
-                    if isHovered {
-                        guard self.groupedToolMenuSuppressedGroupKey != fallbackTool,
-                              let btn else { return }
-                        self.showToolGroupMenu(group, from: btn)
-                    } else if self.groupedToolMenuSuppressedGroupKey == fallbackTool,
-                              let btn,
-                              self.toolButtons[fallbackTool] === btn {
-                        self.groupedToolMenuSuppressedGroupKey = nil
-                    }
-                }
-            }
+            btn.onPress = { [weak self] in self?.selectTool(displayedTool) }
             panel.addSubview(btn)
             for tool in group { toolButtons[tool] = btn }
-            bx += btnSize + spacing
+            bx += btnSize
+
+            if group.count > 1 {
+                let menuButton = HoverIconButton(
+                    frame: NSRect(x: bx, y: by, width: toolMenuTriggerW, height: btnSize),
+                    symbolName: "chevron.up",
+                    tooltip: "More \(tooltip)",
+                    pointSize: 6
+                )
+                menuButton.onPress = { [weak self, weak menuButton] in
+                    guard let self, let menuButton else { return }
+                    self.showToolGroupMenu(group, from: menuButton)
+                }
+                panel.addSubview(menuButton)
+                bx += toolMenuTriggerW
+            }
+            bx += spacing
         }
 
         // Divider 1 (after tools, before undo/redo)
@@ -239,11 +227,16 @@ extension OverlayView {
         ocrBtn.onPress = { [weak self] in self?.enterOCRMode() }
         panel.addSubview(ocrBtn); bx += btnSize
 
-        // OCR dropdown chevron
-        let chevronBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: ocrChevronW, height: btnSize), symbolName: "chevron.down", tooltip: "", pointSize: 7)
+        // OCR action-menu trigger
+        let chevronBtn = HoverIconButton(
+            frame: NSRect(x: bx, y: by, width: ocrChevronW, height: btnSize),
+            symbolName: "chevron.up",
+            tooltip: "More OCR Actions",
+            pointSize: 7
+        )
         chevronBtn.onPress = { [weak self] in
             guard let self = self else { return }
-            self.showOCRDropdownMenu(from: chevronBtn)
+            self.showOCRActionMenu(from: chevronBtn)
         }
         panel.addSubview(chevronBtn); bx += ocrChevronW + spacing
 
@@ -565,95 +558,84 @@ extension OverlayView {
 
     // MARK: - Grouped Annotation Tool Menu
     func showToolGroupMenu(_ tools: [AnnotationTool], from view: NSView) {
-        dismissGroupedToolMenu()
+        if toolbarMenuTriggerView === view {
+            dismissToolbarMenu()
+            return
+        }
+        dismissToolbarMenu()
 
         let menuWidth: CGFloat = 154
         let rowHeight: CGFloat = 30
         let padding: CGFloat = 4
         let menuHeight = padding * 2 + rowHeight * CGFloat(tools.count)
         let triggerFrame = view.convert(view.bounds, to: self)
-        let gap: CGFloat = 6
-        let menuX = clampedPanelX(preferredX: triggerFrame.midX - menuWidth / 2, width: menuWidth)
-        let aboveY = triggerFrame.maxY + gap
-        let menuY: CGFloat
-        if aboveY + menuHeight <= bounds.maxY - 4 {
-            menuY = aboveY
-        } else {
-            menuY = max(bounds.minY + 4, triggerFrame.minY - gap - menuHeight)
-        }
+        let menuFrame = ToolbarMenuLayout.frame(
+            triggerFrame: triggerFrame,
+            menuSize: NSSize(width: menuWidth, height: menuHeight),
+            in: bounds
+        )
 
         let menu = makeSolidPanel(
-            frame: NSRect(x: menuX, y: menuY, width: menuWidth, height: menuHeight),
+            frame: menuFrame,
             cornerRadius: 6
         )
         let rememberedTool = annoState.rememberedTool(in: tools)
         for (index, tool) in tools.enumerated() {
             let rowY = padding + CGFloat(tools.count - 1 - index) * rowHeight
-            let item = GroupedToolMenuItem(
+            let item = ToolbarMenuItem(
                 frame: NSRect(x: padding, y: rowY, width: menuWidth - padding * 2, height: rowHeight),
                 tool: tool,
                 isSelected: rememberedTool == tool
             )
             item.onPress = { [weak self] in
                 guard let self else { return }
-                self.groupedToolMenuSuppressedGroupKey = nil
                 self.selectTool(tool)
             }
             menu.addSubview(item)
         }
         addSubview(menu)
-        groupedToolMenuView = menu
-        groupedToolMenuTriggerView = view
+        toolbarMenuView = menu
+        toolbarMenuTriggerView = view
     }
 
-    func dismissGroupedToolMenu() {
-        groupedToolMenuView?.removeFromSuperview()
-        groupedToolMenuView = nil
-        groupedToolMenuTriggerView = nil
+    func dismissToolbarMenu() {
+        toolbarMenuView?.removeFromSuperview()
+        toolbarMenuView = nil
+        toolbarMenuTriggerView = nil
     }
 
-    func updateGroupedToolMenuInteraction(at point: NSPoint) {
-        if let groupKey = groupedToolMenuSuppressedGroupKey,
-           let button = toolButtons[groupKey] {
-            let buttonFrame = button.convert(button.bounds, to: self)
-            if !buttonFrame.contains(point) {
-                groupedToolMenuSuppressedGroupKey = nil
-            }
+    // MARK: - OCR Action Menu
+    func showOCRActionMenu(from view: NSView) {
+        if toolbarMenuTriggerView === view {
+            dismissToolbarMenu()
+            return
         }
+        dismissToolbarMenu()
 
-        guard let menu = groupedToolMenuView,
-              let trigger = groupedToolMenuTriggerView else { return }
-        let triggerFrame = trigger.convert(trigger.bounds, to: self)
-        let hoverRegion = menu.frame.union(triggerFrame).insetBy(dx: -2, dy: -2)
-        if !hoverRegion.contains(point) {
-            dismissGroupedToolMenu()
+        let menuWidth: CGFloat = 218
+        let rowHeight: CGFloat = 30
+        let padding: CGFloat = 4
+        let menuSize = NSSize(width: menuWidth, height: rowHeight + padding * 2)
+        let triggerFrame = view.convert(view.bounds, to: self)
+        let menu = makeSolidPanel(
+            frame: ToolbarMenuLayout.frame(triggerFrame: triggerFrame, menuSize: menuSize, in: bounds),
+            cornerRadius: 6
+        )
+        let item = ToolbarMenuItem(
+            frame: NSRect(x: padding, y: padding, width: menuWidth - padding * 2, height: rowHeight),
+            symbolName: "doc.on.doc",
+            title: "Copy All Text & Done",
+            shortcut: "\u{21E7}O"
+        )
+        item.onPress = { [weak self] in
+            guard let self else { return }
+            self.dismissToolbarMenu()
+            self.ocrCopyAllAndDone()
         }
-    }
-
-    // MARK: - OCR Dropdown Menu
-    func showOCRDropdownMenu(from view: NSView) {
-        let menu = NSMenu()
-
-        let copyAllItem = NSMenuItem(title: "Copy All Text & Done", action: #selector(ocrDropdownCopyAll), keyEquivalent: "")
-        copyAllItem.keyEquivalentModifierMask = []
-        // Show shortcut hint in the menu item
-        let attrTitle = NSMutableAttributedString(string: "Copy All Text & Done")
-        let shortcutStr = NSAttributedString(string: "  \u{21E7}O", attributes: [
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .font: NSFont.systemFont(ofSize: 12)
-        ])
-        attrTitle.append(shortcutStr)
-        copyAllItem.attributedTitle = attrTitle
-        copyAllItem.target = self
-        menu.addItem(copyAllItem)
-
-        // Position menu below the chevron button
-        let menuLocation = NSPoint(x: 0, y: view.bounds.height + 2)
-        menu.popUp(positioning: nil, at: menuLocation, in: view)
-    }
-
-    @objc func ocrDropdownCopyAll() {
-        ocrCopyAllAndDone()
+        menu.addSubview(item)
+        addSubview(menu)
+        toolbarMenuView = menu
+        toolbarMenuTriggerView = view
     }
 
     /// Show panel for multi-selection: only delete button
