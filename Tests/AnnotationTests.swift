@@ -12,6 +12,7 @@ private enum AnnotationTests {
         try test("toolbar groups stay compact and cycle deterministically", testToolGroupsAndCycling)
         try test("grouped tool preferences persist across annotation states", testGroupedToolPersistence)
         try test("toolbar menus avoid their dedicated triggers", testToolbarMenuPlacement)
+        try test("toolbar menu shortcuts keep contrast on the light surface", testToolbarMenuShortcutContrast)
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
         try test("circle geometry only hits the ellipse border", testCircleGeometry)
         try test("circle and highlight resize from four corners", testBoxResizeHandles)
@@ -102,6 +103,14 @@ private enum AnnotationTests {
         let clamped = ToolbarMenuLayout.frame(triggerFrame: rightEdgeTrigger, menuSize: menuSize, in: overlayBounds)
         try expect(clamped.maxX <= overlayBounds.maxX - ToolbarMenuLayout.margin, "toolbar menu escaped the right screen edge")
         try expect(clamped.minX >= overlayBounds.minX + ToolbarMenuLayout.margin, "toolbar menu escaped the left screen edge")
+    }
+
+    private static func testToolbarMenuShortcutContrast() throws {
+        guard let color = ToolbarMenuItem.shortcutTextColor.usingColorSpace(.deviceRGB) else {
+            throw AnnotationTestFailure(message: "could not resolve toolbar shortcut color")
+        }
+        try expect(color.brightnessComponent < 0.6, "toolbar shortcut is too light for the fixed light menu surface")
+        try expect(color.alphaComponent == 1, "toolbar shortcut contrast was reduced by transparency")
     }
 
     private static func testLineGeometry() throws {

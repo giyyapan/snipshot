@@ -217,6 +217,8 @@ class HoverIconButton: NSView {
 
 // MARK: - Toolbar Menu Item
 class ToolbarMenuItem: NSView {
+    static let shortcutTextColor = NSColor(white: 0.42, alpha: 1)
+
     var onPress: (() -> Void)?
     private var isHovered = false
     private var isPressed = false
@@ -256,7 +258,9 @@ class ToolbarMenuItem: NSView {
         } else if let shortcut {
             let shortcutLabel = NSTextField(labelWithString: shortcut)
             shortcutLabel.font = NSFont.systemFont(ofSize: 11)
-            shortcutLabel.textColor = .secondaryLabelColor
+            // Toolbar menus always use a light surface, so a dynamic semantic
+            // color can become white in Dark Mode and lose all contrast.
+            shortcutLabel.textColor = Self.shortcutTextColor
             shortcutLabel.alignment = .right
             shortcutLabel.frame = NSRect(x: frame.width - 38, y: (frame.height - 15) / 2, width: 30, height: 15)
             addSubview(shortcutLabel)
