@@ -10,6 +10,7 @@ private enum AnnotationTests {
 
     static func main() throws {
         try test("toolbar groups stay compact and cycle deterministically", testToolGroupsAndCycling)
+        try test("grouped tool preferences persist across annotation states", testGroupedToolPersistence)
         try test("toolbar menus avoid their dedicated triggers", testToolbarMenuPlacement)
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
         try test("circle geometry only hits the ellipse border", testCircleGeometry)
@@ -43,7 +44,13 @@ private enum AnnotationTests {
         try expect(AnnotationTool.cycledTool(in: [.rectangle, .circle], current: .text) == .rectangle, "R did not start at Rectangle")
         try expect(AnnotationTool.cycledTool(in: [.mosaic, .highlight], current: .mosaic) == .highlight, "M did not advance to Highlight")
 
-        let state = AnnotationState()
+        let suiteName = "AnnotationTests.toolGroups.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            throw AnnotationTestFailure(message: "could not create isolated tool-group defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let state = AnnotationState(userDefaults: defaults)
         state.currentTool = .arrow
         try expect(state.toolForGroupShortcut([.arrow, .line]) == .line, "active Arrow did not cycle to Line")
         state.currentTool = .line
@@ -56,6 +63,25 @@ private enum AnnotationTests {
         state.currentTool = .highlight
         state.currentTool = .select
         try expect(state.rememberedTool(in: [.mosaic, .highlight]) == .highlight, "Select reset the visible group member to Mosaic")
+    }
+
+    private static func testGroupedToolPersistence() throws {
+        let suiteName = "AnnotationTests.toolPersistence.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            throw AnnotationTestFailure(message: "could not create isolated persistence defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let firstState = AnnotationState(userDefaults: defaults)
+        firstState.currentTool = .line
+        firstState.currentTool = .circle
+        firstState.currentTool = .highlight
+        firstState.currentTool = .select
+
+        let restoredState = AnnotationState(userDefaults: defaults)
+        try expect(restoredState.rememberedTool(in: [.arrow, .line]) == .line, "Line preference was not restored")
+        try expect(restoredState.rememberedTool(in: [.rectangle, .circle]) == .circle, "Circle preference was not restored")
+        try expect(restoredState.rememberedTool(in: [.mosaic, .highlight]) == .highlight, "Highlight preference was not restored")
     }
 
     private static func testToolbarMenuPlacement() throws {

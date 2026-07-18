@@ -173,7 +173,7 @@ extension OverlayView {
                 let menuButton = HoverIconButton(
                     frame: NSRect(x: bx, y: by, width: toolMenuTriggerW, height: btnSize),
                     symbolName: "chevron.up",
-                    tooltip: "More \(tooltip)",
+                    tooltip: "More",
                     pointSize: 6
                 )
                 menuButton.onPress = { [weak self, weak menuButton] in
@@ -231,7 +231,7 @@ extension OverlayView {
         let chevronBtn = HoverIconButton(
             frame: NSRect(x: bx, y: by, width: ocrChevronW, height: btnSize),
             symbolName: "chevron.up",
-            tooltip: "More OCR Actions",
+            tooltip: "More",
             pointSize: 7
         )
         chevronBtn.onPress = { [weak self] in

@@ -503,6 +503,9 @@ class AnnotationElement {
 class AnnotationState {
     private static let colorKey = "annoColor"
     private static let strokeKey = "annoStrokeWidths"
+    private static let rememberedGroupToolsKey = "annoRememberedGroupTools"
+
+    private let userDefaults: UserDefaults
 
     private static let colorNameMap: [String: NSColor] = [
         "systemRed": .systemRed, "systemOrange": .systemOrange,
@@ -531,7 +534,10 @@ class AnnotationState {
             guard let currentTool else { return }
             for group in AnnotationTool.toolbarGroups where group.count > 1 && group.contains(currentTool) {
                 if let groupKey = group.first {
-                    rememberedGroupTools[groupKey] = currentTool
+                    if rememberedGroupTools[groupKey] != currentTool {
+                        rememberedGroupTools[groupKey] = currentTool
+                        persistRememberedGroupTools()
+                    }
                 }
                 break
             }
@@ -555,8 +561,7 @@ class AnnotationState {
 
     var currentColor: NSColor = .systemRed {
         didSet {
-            let ud = UserDefaults.standard
-            ud.set(Self.nameColorMap[currentColor] ?? "systemRed", forKey: Self.colorKey)
+            userDefaults.set(Self.nameColorMap[currentColor] ?? "systemRed", forKey: Self.colorKey)
         }
     }
 
@@ -574,7 +579,7 @@ class AnnotationState {
             for (tool, width) in strokeWidths {
                 dict[tool.rawValue] = Double(width)
             }
-            UserDefaults.standard.set(dict, forKey: Self.strokeKey)
+            userDefaults.set(dict, forKey: Self.strokeKey)
         }
     }
 
@@ -583,10 +588,11 @@ class AnnotationState {
     var selectedElementIds: Set<UUID> = []  // for multi-select
     var nextMarkerNumber: Int = 1
 
-    init() {
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+
         // Load stroke widths FIRST (before color, since color didSet won't touch strokes)
-        let ud = UserDefaults.standard
-        if let dict = ud.dictionary(forKey: Self.strokeKey) as? [String: Double] {
+        if let dict = userDefaults.dictionary(forKey: Self.strokeKey) as? [String: Double] {
             for (key, val) in dict {
                 if let tool = AnnotationTool(rawValue: key) {
                     strokeWidths[tool] = CGFloat(val)
@@ -594,10 +600,28 @@ class AnnotationState {
             }
         }
         // Load color (didSet will fire but only saves color key, won't overwrite strokes)
-        if let colorName = ud.string(forKey: Self.colorKey),
+        if let colorName = userDefaults.string(forKey: Self.colorKey),
            let color = Self.colorNameMap[colorName] {
             currentColor = color
         }
+
+        if let storedTools = userDefaults.dictionary(forKey: Self.rememberedGroupToolsKey) as? [String: String] {
+            for group in AnnotationTool.toolbarGroups where group.count > 1 {
+                guard let groupKey = group.first,
+                      let rawValue = storedTools[groupKey.rawValue],
+                      let tool = AnnotationTool(rawValue: rawValue),
+                      group.contains(tool) else { continue }
+                rememberedGroupTools[groupKey] = tool
+            }
+        }
+    }
+
+    private func persistRememberedGroupTools() {
+        var storedTools: [String: String] = [:]
+        for (groupKey, tool) in rememberedGroupTools {
+            storedTools[groupKey.rawValue] = tool.rawValue
+        }
+        userDefaults.set(storedTools, forKey: Self.rememberedGroupToolsKey)
     }
 
     var undoStack: [[AnnotationElement]] = []
