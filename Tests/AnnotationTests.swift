@@ -34,16 +34,17 @@ private enum AnnotationTests {
     }
 
     private static func testToolGroupsAndCycling() throws {
-        try expect(AnnotationTool.toolbarGroups.count == 6, "top-level annotation slot count changed")
+        try expect(AnnotationTool.toolbarGroups.count == 7, "top-level annotation slot count changed")
         try expect(AnnotationTool.toolbarGroups[1] == [.arrow, .line], "Arrow/Line group is wrong")
         try expect(AnnotationTool.toolbarGroups[2] == [.rectangle, .circle], "Rectangle/Circle group is wrong")
-        try expect(AnnotationTool.toolbarGroups[5] == [.mosaic, .highlight], "Mosaic/Highlight group is wrong")
+        try expect(AnnotationTool.toolbarGroups[5] == [.mosaic], "Mosaic should have its own toolbar slot")
+        try expect(AnnotationTool.toolbarGroups[6] == [.highlight], "Highlight should have its own toolbar slot")
+        try expect(AnnotationTool.highlight.displayName == "Highlight  H", "Highlight did not advertise the H shortcut")
 
         try expect(AnnotationTool.cycledTool(in: [.arrow, .line], current: nil) == .arrow, "A did not start at Arrow")
         try expect(AnnotationTool.cycledTool(in: [.arrow, .line], current: .arrow) == .line, "A did not advance to Line")
         try expect(AnnotationTool.cycledTool(in: [.arrow, .line], current: .line) == .arrow, "A did not wrap to Arrow")
         try expect(AnnotationTool.cycledTool(in: [.rectangle, .circle], current: .text) == .rectangle, "R did not start at Rectangle")
-        try expect(AnnotationTool.cycledTool(in: [.mosaic, .highlight], current: .mosaic) == .highlight, "M did not advance to Highlight")
 
         let suiteName = "AnnotationTests.toolGroups.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
@@ -61,9 +62,6 @@ private enum AnnotationTests {
         state.currentTool = .circle
         state.currentTool = .select
         try expect(state.rememberedTool(in: [.rectangle, .circle]) == .circle, "Select reset the visible group member to Rectangle")
-        state.currentTool = .highlight
-        state.currentTool = .select
-        try expect(state.rememberedTool(in: [.mosaic, .highlight]) == .highlight, "Select reset the visible group member to Mosaic")
     }
 
     private static func testGroupedToolPersistence() throws {
@@ -76,13 +74,11 @@ private enum AnnotationTests {
         let firstState = AnnotationState(userDefaults: defaults)
         firstState.currentTool = .line
         firstState.currentTool = .circle
-        firstState.currentTool = .highlight
         firstState.currentTool = .select
 
         let restoredState = AnnotationState(userDefaults: defaults)
         try expect(restoredState.rememberedTool(in: [.arrow, .line]) == .line, "Line preference was not restored")
         try expect(restoredState.rememberedTool(in: [.rectangle, .circle]) == .circle, "Circle preference was not restored")
-        try expect(restoredState.rememberedTool(in: [.mosaic, .highlight]) == .highlight, "Highlight preference was not restored")
     }
 
     private static func testToolbarMenuPlacement() throws {

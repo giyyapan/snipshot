@@ -32,7 +32,7 @@ After launching, Snipshot runs as a menu bar agent. Press **F1** to start a scre
 | F3 | Pin selection to desktop |
 | Esc | Cancel |
 
-In the annotation toolbar, repeated shortcuts cycle grouped tools: **A** switches Arrow / Line, **R** switches Rectangle / Circle, and **M** switches Mosaic / Spotlight Highlight. **T** selects Text and **C** selects Marker. Hover a grouped toolbar button to choose from its upward menu.
+In the annotation toolbar, repeated shortcuts cycle grouped tools: **A** switches Arrow / Line and **R** switches Rectangle / Circle. **M** selects Mosaic, **H** selects Spotlight Highlight, **T** selects Text, and **C** selects Marker. Click a grouped tool's separate up-chevron to choose another tool in that group.
 
 ## Project Structure
 

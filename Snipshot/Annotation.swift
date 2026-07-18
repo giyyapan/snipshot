@@ -13,14 +13,15 @@ enum AnnotationTool: String, CaseIterable {
     case highlight
 
     /// Top-level toolbar slots. Related tools share one slot and are selected
-    /// from the slot's hover menu or by repeatedly pressing its shortcut.
+    /// from its separate menu trigger or by repeatedly pressing its shortcut.
     static let toolbarGroups: [[AnnotationTool]] = [
         [.select],
         [.arrow, .line],
         [.rectangle, .circle],
         [.text],
         [.marker],
-        [.mosaic, .highlight]
+        [.mosaic],
+        [.highlight]
     ]
 
     static func cycledTool(in group: [AnnotationTool], current: AnnotationTool?) -> AnnotationTool {
@@ -53,7 +54,7 @@ enum AnnotationTool: String, CaseIterable {
         case .text:      return "Text  T"
         case .marker:    return "Marker  C"
         case .mosaic:    return "Mosaic  M"
-        case .highlight: return "Highlight  M"
+        case .highlight: return "Highlight  H"
         }
     }
 
@@ -522,11 +523,10 @@ class AnnotationState {
 
     /// The last selected member of each grouped toolbar slot. This is kept
     /// independently from `currentTool` so switching to Select does not reset
-    /// the visible group choice back to Arrow/Rectangle/Mosaic.
+    /// the visible group choice back to Arrow/Rectangle.
     private var rememberedGroupTools: [AnnotationTool: AnnotationTool] = [
         .arrow: .arrow,
-        .rectangle: .rectangle,
-        .mosaic: .mosaic
+        .rectangle: .rectangle
     ]
 
     var currentTool: AnnotationTool? = nil {
