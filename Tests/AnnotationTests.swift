@@ -13,6 +13,7 @@ private enum AnnotationTests {
         try test("grouped tool preferences persist across annotation states", testGroupedToolPersistence)
         try test("toolbar menus avoid their dedicated triggers", testToolbarMenuPlacement)
         try test("toolbar menu shortcuts keep contrast on the light surface", testToolbarMenuShortcutContrast)
+        try test("toolbar menu rows hit test in their parent coordinates", testToolbarMenuItemHitTesting)
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
         try test("circle geometry only hits the ellipse border", testCircleGeometry)
         try test("circle and highlight resize from four corners", testBoxResizeHandles)
@@ -107,6 +108,20 @@ private enum AnnotationTests {
         }
         try expect(color.brightnessComponent < 0.6, "toolbar shortcut is too light for the fixed light menu surface")
         try expect(color.alphaComponent == 1, "toolbar shortcut contrast was reduced by transparency")
+    }
+
+    private static func testToolbarMenuItemHitTesting() throws {
+        let menu = NSView(frame: NSRect(x: 100, y: 100, width: 154, height: 68))
+        let upperItem = ToolbarMenuItem(
+            frame: NSRect(x: 4, y: 34, width: 146, height: 30),
+            tool: .rectangle,
+            isSelected: false
+        )
+        menu.addSubview(upperItem)
+
+        let pointInsideUpperRow = NSPoint(x: 20, y: 49)
+        try expect(upperItem.hitTest(pointInsideUpperRow) === upperItem, "upper toolbar row missed a valid click")
+        try expect(upperItem.hitTest(NSPoint(x: 20, y: 20)) == nil, "upper toolbar row captured a lower-row click")
     }
 
     private static func testLineGeometry() throws {

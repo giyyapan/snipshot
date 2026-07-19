@@ -287,7 +287,8 @@ class ToolbarMenuItem: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
+        let localPoint = convert(point, from: superview)
+        return bounds.contains(localPoint) ? self : nil
     }
 
     override func draw(_ dirtyRect: NSRect) {
