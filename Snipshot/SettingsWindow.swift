@@ -2,7 +2,7 @@ import Cocoa
 import Carbon.HIToolbox
 import ServiceManagement
 
-let kSnipshotVersion = "0.8.2"
+let kSnipshotVersion = "0.9.0"
 
 // MARK: - Hotkey Configuration
 
