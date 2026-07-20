@@ -63,14 +63,12 @@ class NotionService {
     private let notionVersion = "2026-03-11"
 
     // MARK: - OAuth Flow
-
-    private var localServer: LocalOAuthServer?
     private var oauthCompletion: ((Result<Void, Error>) -> Void)?
 
-    /// Opens Notion OAuth in the browser and starts local callback server.
+
+    /// Opens Notion OAuth in the browser. Token is received via snipshot:// URL scheme.
     func startOAuth(completion: @escaping (Result<Void, Error>) -> Void) {
         self.oauthCompletion = completion
-
         // Build authorization URL
         var components = URLComponents(string: "https://api.notion.com/v1/oauth/authorize")!
         components.queryItems = [
@@ -83,38 +81,37 @@ class NotionService {
             completion(.failure(NotionError.oauthFailed("Invalid OAuth URL")))
             return
         }
-
-        // Start local server to receive token forwarded by public OAuth server
-        localServer = LocalOAuthServer(port: 9988) { [weak self] result in
-            guard let self = self else { return }
-            self.localServer = nil
-            switch result {
-            case .failure(let err):
-                DispatchQueue.main.async { self.oauthCompletion?(.failure(err)) }
-            case .success(let tokenDict):
-                // Save token info received from public server
-                if let token = tokenDict["access_token"] {
-                    NotionSettings.accessToken = token
-                }
-                if let name = tokenDict["workspace_name"] {
-                    NotionSettings.workspaceName = name
-                }
-                if let wsId = tokenDict["workspace_id"] {
-                    UserDefaults.standard.set(wsId, forKey: NotionSettings.workspaceIdKey)
-                }
-                if let botId = tokenDict["bot_id"] {
-                    UserDefaults.standard.set(botId, forKey: NotionSettings.botIdKey)
-                }
-                DispatchQueue.main.async { self.oauthCompletion?(.success(())) }
-            }
+        // Force open in default browser (not Notion desktop)
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = false
+        if let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
+            NSWorkspace.shared.open([authURL], withApplicationAt: browserURL, configuration: config)
+        } else {
+            NSWorkspace.shared.open(authURL)
         }
-        localServer?.start()
-
-        // Open browser
-        NSWorkspace.shared.open(authURL)
     }
 
-    // MARK: - Exchange Code for Token
+    /// Called by AppDelegate when snipshot://oauth/notion?access_token=... is received.
+    func handleOAuthCallback(tokenDict: [String: String]) {
+        if let token = tokenDict["access_token"] {
+            NotionSettings.accessToken = token
+        }
+        if let name = tokenDict["workspace_name"] {
+            NotionSettings.workspaceName = name
+        }
+        if let wsId = tokenDict["workspace_id"] {
+            UserDefaults.standard.set(wsId, forKey: NotionSettings.workspaceIdKey)
+        }
+        if let botId = tokenDict["bot_id"] {
+            UserDefaults.standard.set(botId, forKey: NotionSettings.botIdKey)
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.oauthCompletion?(.success(()))
+            self?.oauthCompletion = nil
+        }
+    }
+
+    // MARK: - Exchange Code for Token    // MARK: - Exchange Code for Token
 
     func exchangeCodeForToken(code: String, completion: @escaping (Result<Void, Error>) -> Void) {
         let url = URL(string: "https://api.notion.com/v1/oauth/token")!
@@ -385,155 +382,6 @@ class NotionService {
     }
 }
 
-// MARK: - Local OAuth Callback Server
-// Listens on localhost:9988 for two types of requests:
-//   POST /notion/token  — token forwarded by the public OAuth server after code exchange
-//   GET  /notion/callback?code=xxx — fallback if redirect goes directly to localhost
-
-class LocalOAuthServer {
-    private let port: UInt16
-    private var serverSocket: Int32 = -1
-    private var isRunning = false
-    // tokenCallback receives the full token JSON dict
-    private let tokenCallback: (Result<[String: String], Error>) -> Void
-
-    init(port: UInt16, tokenCallback: @escaping (Result<[String: String], Error>) -> Void) {
-        self.port = port
-        self.tokenCallback = tokenCallback
-    }
-
-    func start() {
-        isRunning = true
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            self?.runServer()
-        }
-    }
-
-    func stop() {
-        isRunning = false
-        if serverSocket >= 0 { close(serverSocket); serverSocket = -1 }
-    }
-
-    private func runServer() {
-        serverSocket = socket(AF_INET, SOCK_STREAM, 0)
-        guard serverSocket >= 0 else {
-            tokenCallback(.failure(NotionError.oauthFailed("Cannot create socket")))
-            return
-        }
-
-        var opt: Int32 = 1
-        setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, socklen_t(MemoryLayout<Int32>.size))
-
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr.s_addr = INADDR_ANY
-
-        let bindResult = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(serverSocket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        guard bindResult == 0 else {
-            tokenCallback(.failure(NotionError.oauthFailed("Cannot bind to port \(port)")))
-            close(serverSocket)
-            return
-        }
-
-        listen(serverSocket, 5)
-
-        // Keep accepting connections until we get a valid token
-        while isRunning {
-            let clientSocket = accept(serverSocket, nil, nil)
-            guard clientSocket >= 0 else { break }
-            handleConnection(clientSocket)
-        }
-        if serverSocket >= 0 { close(serverSocket); serverSocket = -1 }
-    }
-
-    private func handleConnection(_ clientSocket: Int32) {
-        defer { close(clientSocket) }
-
-        // Read up to 8KB
-        let bufSize = 8192
-        let bufPtr = UnsafeMutablePointer<UInt8>.allocate(capacity: bufSize)
-        defer { bufPtr.deallocate() }
-        var totalRead = 0
-        while totalRead < bufSize {
-            let n = Darwin.read(clientSocket, bufPtr.advanced(by: totalRead), bufSize - totalRead)
-            if n <= 0 { break }
-            totalRead += n
-            // Stop reading once we have the full HTTP request (double CRLF)
-            let partial = String(bytes: UnsafeBufferPointer(start: bufPtr, count: totalRead), encoding: .utf8) ?? ""
-            if partial.contains("\r\n\r\n") { break }
-        }
-        let request = String(bytes: UnsafeBufferPointer(start: bufPtr, count: totalRead), encoding: .utf8) ?? ""
-
-        // CORS preflight
-        if request.hasPrefix("OPTIONS") {
-            let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n"
-            write(clientSocket, resp, resp.utf8.count)
-            return
-        }
-
-        // POST /notion/token — token forwarded by public server
-        if request.hasPrefix("POST /notion/token") {
-            // Extract JSON body (after \r\n\r\n)
-            let okResp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
-            write(clientSocket, okResp, okResp.utf8.count)
-
-            if let bodyRange = request.range(of: "\r\n\r\n"),
-               let bodyData = String(request[bodyRange.upperBound...]).data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: String],
-               let token = json["access_token"], !token.isEmpty {
-                isRunning = false
-                tokenCallback(.success(json))
-            }
-            return
-        }
-
-        // GET /notion/callback?code=xxx — fallback direct localhost redirect
-        if request.hasPrefix("GET /notion/callback?") {
-            let queryPart = String(request.dropFirst("GET /notion/callback?".count))
-            let params = queryPart.components(separatedBy: " ").first ?? ""
-            var code: String? = nil
-            for param in params.components(separatedBy: "&") {
-                let kv = param.components(separatedBy: "=")
-                if kv.count == 2 && kv[0] == "code" {
-                    code = kv[1].removingPercentEncoding
-                }
-            }
-            let html = "<html><body style='font-family:sans-serif;text-align:center;padding:60px'><h2>✅ Notion 授权成功！</h2><p>正在处理，请稍候...</p></body></html>"
-            let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
-            write(clientSocket, resp, resp.utf8.count)
-            if let code = code {
-                // Exchange code for token directly on localhost
-                NotionService.shared.exchangeCodeForToken(code: code) { [weak self] result in
-                    guard let self = self else { return }
-                    switch result {
-                    case .success:
-                        self.isRunning = false
-                        // Build token dict from saved settings
-                        let tokenDict: [String: String] = [
-                            "access_token": NotionSettings.accessToken,
-                            "workspace_name": NotionSettings.workspaceName,
-                            "workspace_id": UserDefaults.standard.string(forKey: NotionSettings.workspaceIdKey) ?? "",
-                            "bot_id": UserDefaults.standard.string(forKey: NotionSettings.botIdKey) ?? "",
-                        ]
-                        self.tokenCallback(.success(tokenDict))
-                    case .failure(let err):
-                        self.tokenCallback(.failure(err))
-                    }
-                }
-            }
-            return
-        }
-
-        // Unknown request — 404
-        let notFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        write(clientSocket, notFound, notFound.utf8.count)
-    }
-}
 
 // MARK: - Notion Errors
 

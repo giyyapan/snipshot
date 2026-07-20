@@ -132,7 +132,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // Listen for "open settings for translation" notification
         NotificationCenter.default.addObserver(self, selector: #selector(openSettingsForTranslation), name: NSNotification.Name("OpenSettingsForTranslation"), object: nil)
 
+        // Register URL scheme handler for OAuth callback (snipshot://...)
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleGetURL(_:replyEvent:)), forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+
         logMessage("Snipshot v\(kSnipshotVersion) ready. Capture hotkey: \(captureHotkey.displayString), F3 to pin from clipboard.")
+    }
+
+    // MARK: - URL Scheme Handler (snipshot://oauth/notion?access_token=...)
+    @objc func handleGetURL(_ event: NSAppleEventDescriptor, replyEvent: NSAppleEventDescriptor) {
+        guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: urlString),
+              url.scheme == "snipshot",
+              url.host == "oauth",
+              url.path == "/notion" || url.path == "notion"
+        else { return }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems
+        else { return }
+        var tokenDict: [String: String] = [:]
+        for item in queryItems {
+            if let value = item.value {
+                tokenDict[item.name] = value
+            }
+        }
+        guard let token = tokenDict["access_token"], !token.isEmpty else { return }
+        logMessage("Received OAuth token via URL scheme")
+        NotionService.shared.handleOAuthCallback(tokenDict: tokenDict)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
