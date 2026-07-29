@@ -106,12 +106,22 @@ swiftc \
     "$PROJECT_DIR/Snipshot/ScrollCaptureController.swift" \
     "$PROJECT_DIR/Snipshot/NotionService.swift" \
     "$PROJECT_DIR/Snipshot/NotionBugPanel.swift" \
+    "$PROJECT_DIR/Snipshot/NotionSecrets.swift" \
+    "$PROJECT_DIR/Snipshot/PreviewWindow.swift" \
+    "$PROJECT_DIR/vendor/Permiso/AppDragSourceView.swift" \
+    "$PROJECT_DIR/vendor/Permiso/OverlayWindowController.swift" \
+    "$PROJECT_DIR/vendor/Permiso/PermisoAssistant.swift" \
+    "$PROJECT_DIR/vendor/Permiso/PermisoHostApp.swift" \
+    "$PROJECT_DIR/vendor/Permiso/PermisoPanel.swift" \
+    "$PROJECT_DIR/vendor/Permiso/SettingsWindowLocator.swift" \
     -o "$MACOS/Snipshot"
 
 # Copy resources
 cp "$PROJECT_DIR/Snipshot/Info.plist" "$CONTENTS/Info.plist"
 cp "$PROJECT_DIR/Snipshot/Snipshot.entitlements" "$RESOURCES/Snipshot.entitlements"
 cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES/AppIcon.icns"
+rm -rf "$RESOURCES/icons" && cp -R "$PROJECT_DIR/Snipshot/icons" "$RESOURCES/icons"
+cp "$PROJECT_DIR/Snipshot/notion_logo.png" "$RESOURCES/notion_logo.png" 2>/dev/null || true
 
 # =============================================================================
 # Step 1.5: Embed Sparkle.framework
@@ -134,9 +144,9 @@ FULL_IDENTITY=$(security find-identity -p codesigning -v \
 
 if [ -z "$FULL_IDENTITY" ]; then
     echo ""
-    echo "ERROR: No trusted Developer ID Application certificate found."
-    echo "Run ./setup_signing.sh first to create one."
-    exit 1
+    echo "No Developer ID found, using ad-hoc signing..."
+    
+    FULL_IDENTITY="-"
 fi
 
 echo "Signing with '$FULL_IDENTITY'..."
