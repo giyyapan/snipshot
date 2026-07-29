@@ -8,6 +8,7 @@ enum OverlayAction {
     case save(NSImage, NSRect)
     case pin(NSImage, NSRect)
     case scrollCapture(NSRect, NSImage)  // Start scrolling capture with the selection rect (screen coords) and clean first frame
+    case notionBug(NSImage, NSRect)  // Create a Notion bug case with the annotated screenshot
     case cancel
 }
 
@@ -444,7 +445,7 @@ class OverlayView: NSView {
     }
 
     // MARK: - Actions
-    enum ActionType { case copy, save, pin, scrollCapture, cancel }
+    enum ActionType { case copy, save, pin, scrollCapture, notionBug, cancel }
 
     func performAction(_ type: ActionType) {
         // Auto-commit any uncommitted text editing before exporting
@@ -494,6 +495,7 @@ class OverlayView: NSView {
         case .copy:  onAction(.copy(image, screenRect))
         case .save:  onAction(.save(image, screenRect))
         case .pin:   onAction(.pin(image, screenRect))
+        case .notionBug: onAction(.notionBug(image, screenRect))
         case .scrollCapture, .cancel: break
         }
     }
