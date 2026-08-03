@@ -97,3 +97,29 @@ public enum SecureInputDiagnostics {
         return Int32(text[range])
     }
 }
+
+public enum SecureInputRecoveryWaitDecision: Equatable, Sendable {
+    case continueWaiting
+    case secureInputCleared(applicationTerminated: Bool)
+    case applicationTerminated
+    case timedOut
+}
+
+public enum SecureInputRecoveryDecisions {
+    /// Secure Input is the source of truth for recovery. An application may
+    /// release its assertion before AppKit reports that the process terminated,
+    /// so a cleared assertion must always win over process bookkeeping.
+    public static func waitDecision(
+        isSecureInputEnabled: Bool,
+        isApplicationTerminated: Bool,
+        attemptsRemaining: Int
+    ) -> SecureInputRecoveryWaitDecision {
+        if !isSecureInputEnabled {
+            return .secureInputCleared(applicationTerminated: isApplicationTerminated)
+        }
+        if isApplicationTerminated {
+            return .applicationTerminated
+        }
+        return attemptsRemaining > 0 ? .continueWaiting : .timedOut
+    }
+}

@@ -8,6 +8,10 @@ import Carbon.HIToolbox
 /// to terminate normally, stop as soon as every assertion clears, and then
 /// reopen only the apps that were closed by this recovery run.
 final class SecureInputRecoveryController {
+    private static let terminationPollInterval: TimeInterval = 0.25
+    private static let terminationPollAttempts = 40
+    private static let postTerminationSecureInputPollAttempts = 8
+
     private struct ClosedApplication {
         let name: String
         let bundleURL: URL
@@ -92,7 +96,12 @@ final class SecureInputRecoveryController {
         }
 
         logMessage("Secure Input recovery requested normal termination of \(name) (pid \(application.processIdentifier)).")
-        waitForTermination(of: application, name: name, bundleURL: bundleURL, attemptsRemaining: 40)
+        waitForTermination(
+            of: application,
+            name: name,
+            bundleURL: bundleURL,
+            attemptsRemaining: Self.terminationPollAttempts
+        )
     }
 
     private func waitForTermination(
@@ -101,25 +110,94 @@ final class SecureInputRecoveryController {
         bundleURL: URL,
         attemptsRemaining: Int
     ) {
-        if application.isTerminated {
-            closedApplications.append(ClosedApplication(name: name, bundleURL: bundleURL))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-                self?.recoverNextApplication()
-            }
-            return
-        }
+        let decision = SecureInputRecoveryDecisions.waitDecision(
+            isSecureInputEnabled: IsSecureEventInputEnabled(),
+            isApplicationTerminated: application.isTerminated,
+            attemptsRemaining: attemptsRemaining
+        )
 
-        guard attemptsRemaining > 0 else {
+        switch decision {
+        case .secureInputCleared(let applicationTerminated):
+            logMessage("Secure Input recovery observed Secure Input off while waiting for \(name).")
+            if applicationTerminated {
+                rememberClosedApplication(name: name, bundleURL: bundleURL)
+                finish(success: true, detail: nil)
+            } else {
+                reopenIfTerminationCompletes(
+                    application,
+                    name: name,
+                    bundleURL: bundleURL,
+                    attemptsRemaining: Self.terminationPollAttempts
+                )
+                finish(
+                    success: true,
+                    detail: "Secure Input was cleared after asking \(name) to quit. If it finishes quitting, it will be reopened automatically."
+                )
+            }
+
+        case .applicationTerminated:
+            rememberClosedApplication(name: name, bundleURL: bundleURL)
+            waitForSecureInputToSettle(
+                attemptsRemaining: Self.postTerminationSecureInputPollAttempts
+            )
+
+        case .timedOut:
             finish(
                 success: false,
                 detail: "\(name) did not quit, possibly because it is waiting for you to save a document. Handle that prompt, then run the fix again."
             )
+
+        case .continueWaiting:
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.terminationPollInterval) { [weak self] in
+                self?.waitForTermination(
+                    of: application,
+                    name: name,
+                    bundleURL: bundleURL,
+                    attemptsRemaining: attemptsRemaining - 1
+                )
+            }
+        }
+    }
+
+    private func waitForSecureInputToSettle(attemptsRemaining: Int) {
+        if !IsSecureEventInputEnabled() {
+            logMessage("Secure Input recovery observed Secure Input off after application termination.")
+            finish(success: true, detail: nil)
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.waitForTermination(
-                of: application,
+        guard attemptsRemaining > 0 else {
+            recoverNextApplication()
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.terminationPollInterval) { [weak self] in
+            self?.waitForSecureInputToSettle(attemptsRemaining: attemptsRemaining - 1)
+        }
+    }
+
+    private func rememberClosedApplication(name: String, bundleURL: URL) {
+        if !closedApplications.contains(where: { $0.bundleURL == bundleURL }) {
+            closedApplications.append(ClosedApplication(name: name, bundleURL: bundleURL))
+        }
+    }
+
+    private func reopenIfTerminationCompletes(
+        _ application: NSRunningApplication,
+        name: String,
+        bundleURL: URL,
+        attemptsRemaining: Int
+    ) {
+        if application.isTerminated {
+            reopenApplication(ClosedApplication(name: name, bundleURL: bundleURL))
+            return
+        }
+
+        guard attemptsRemaining > 0 else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.terminationPollInterval) { [weak self] in
+            self?.reopenIfTerminationCompletes(
+                application,
                 name: name,
                 bundleURL: bundleURL,
                 attemptsRemaining: attemptsRemaining - 1
@@ -215,7 +293,9 @@ final class SecureInputRecoveryController {
 
         let summary: String
         if success {
-            if closedNames.isEmpty {
+            if let detail {
+                summary = detail
+            } else if closedNames.isEmpty {
                 summary = "Secure Input cleared before any applications needed to quit."
             } else {
                 summary = "Secure Input was cleared after closing \(closedNames.joined(separator: ", ")). Those applications are being reopened now."
@@ -226,6 +306,8 @@ final class SecureInputRecoveryController {
                 : "Reopening: \(closedNames.joined(separator: ", "))."
             summary = [detail, closedSummary].compactMap { $0 }.joined(separator: "\n\n")
         }
+
+        logMessage("Secure Input recovery finished with success=\(success); closed applications: \(closedNames.joined(separator: ", ")).")
 
         showAlert(
             title: success ? "Secure Input Fixed" : "Secure Input Is Still On",
@@ -243,12 +325,16 @@ final class SecureInputRecoveryController {
         var reopenedPaths = Set<String>()
         for application in closedApplications {
             guard reopenedPaths.insert(application.bundleURL.path).inserted else { continue }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = false
-            workspace.openApplication(at: application.bundleURL, configuration: configuration) { _, error in
-                if let error {
-                    logMessage("Could not reopen \(application.name): \(error.localizedDescription)")
-                }
+            reopenApplication(application)
+        }
+    }
+
+    private func reopenApplication(_ application: ClosedApplication) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        workspace.openApplication(at: application.bundleURL, configuration: configuration) { _, error in
+            if let error {
+                logMessage("Could not reopen \(application.name): \(error.localizedDescription)")
             }
         }
     }

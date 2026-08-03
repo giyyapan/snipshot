@@ -86,6 +86,54 @@ private enum SecureInputStatusTests {
             )
         }
 
+        try test("cleared Secure Input wins while application is still quitting") {
+            let decision = SecureInputRecoveryDecisions.waitDecision(
+                isSecureInputEnabled: false,
+                isApplicationTerminated: false,
+                attemptsRemaining: 20
+            )
+            try expect(
+                decision == .secureInputCleared(applicationTerminated: false),
+                "cleared Secure Input did not finish recovery"
+            )
+        }
+
+        try test("cleared Secure Input records an already terminated application") {
+            let decision = SecureInputRecoveryDecisions.waitDecision(
+                isSecureInputEnabled: false,
+                isApplicationTerminated: true,
+                attemptsRemaining: 20
+            )
+            try expect(
+                decision == .secureInputCleared(applicationTerminated: true),
+                "terminated application was not preserved when Secure Input cleared"
+            )
+        }
+
+        try test("application termination is observed while Secure Input remains on") {
+            let decision = SecureInputRecoveryDecisions.waitDecision(
+                isSecureInputEnabled: true,
+                isApplicationTerminated: true,
+                attemptsRemaining: 20
+            )
+            try expect(decision == .applicationTerminated, "application termination was ignored")
+        }
+
+        try test("timeout only fails while Secure Input remains on") {
+            let timedOut = SecureInputRecoveryDecisions.waitDecision(
+                isSecureInputEnabled: true,
+                isApplicationTerminated: false,
+                attemptsRemaining: 0
+            )
+            let stillWaiting = SecureInputRecoveryDecisions.waitDecision(
+                isSecureInputEnabled: true,
+                isApplicationTerminated: false,
+                attemptsRemaining: 1
+            )
+            try expect(timedOut == .timedOut, "active Secure Input did not time out")
+            try expect(stillWaiting == .continueWaiting, "recovery stopped before its timeout")
+        }
+
         print("SecureInputStatusTests: \(testCount) tests passed")
     }
 
