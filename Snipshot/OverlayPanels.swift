@@ -134,7 +134,7 @@ extension OverlayView {
         let ocrChevronW: CGFloat = 14
         let ocrCount: CGFloat = 2
         let scrollCaptureCount: CGFloat = 1
-        let actionCount: CGFloat = 4
+        let actionCount: CGFloat = 5
 
         let toolsWidth = toolCount * btnSize + groupedToolCount * toolMenuTriggerW + (toolCount - 1) * spacing
         let undoRedoWidth = undoRedoCount * btnSize + (undoRedoCount - 1) * spacing
@@ -264,7 +264,16 @@ extension OverlayView {
         panel.addSubview(divider3)
         bx += (dividerW) / 2
 
-        // Action buttons: pin, save, cancel, copy
+        // Action buttons: notion bug, pin, save, cancel, copy
+        let notionBtn: HoverIconButton
+        if let logoPath = Bundle.main.resourcePath.map({ $0 + "/notion_logo.png" }),
+           let logoImg = NSImage(contentsOfFile: logoPath) {
+            notionBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), image: logoImg, tooltip: "Create Notion Bug Case")
+        } else {
+            notionBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "note.text.badge.plus", tooltip: "Create Notion Bug Case")
+        }
+        notionBtn.onPress = { [weak self] in self?.performAction(.notionBug) }
+        panel.addSubview(notionBtn); bx += btnSize + spacing
         let pinBtn = HoverIconButton(frame: NSRect(x: bx, y: by, width: btnSize, height: btnSize), symbolName: "pin", tooltip: "Pin to Screen  F3")
         pinBtn.onPress = { [weak self] in self?.performAction(.pin) }
         panel.addSubview(pinBtn); bx += btnSize + spacing

@@ -30,9 +30,44 @@ final class StitchingManager {
     private let maximumPendingFrames = 6
     private var frameIndex = 0
 
-    /// Adds a frame if the bounded processing queue has capacity.
-    @discardableResult
-    func addFrame(_ image: NSImage) -> Bool {
+    /// The height (in pixels) of each captured frame.
+    private var framePixelHeight: CGFloat = 0
+
+    /// The width (in pixels) of each captured frame.
+    private var framePixelWidth: CGFloat = 0
+
+    /// Scale factor (pixels / points) derived from the first frame.
+    private var scaleFactor: CGFloat = 1.0
+
+    /// The point size of each frame (for NSImage creation).
+    private var framePointSize: NSSize = .zero
+
+    /// Current scroll position in pixels (positive = in locked direction).
+    /// This tracks the actual position, going up when scrolling forward and
+    /// down when scrolling back.
+    private var currentPosition: CGFloat = 0
+
+    /// The highest position ever reached. The stitched image covers from 0
+    /// to `peakPosition` in the locked direction.
+    private var peakPosition: CGFloat = 0
+
+    /// Serial queue for stitching work to avoid blocking the main thread.
+    private let queue = DispatchQueue(label: "com.meeseek.snipshot-bug.stitching", qos: .userInitiated)
+
+    /// Minimum vertical offset (in pixels) to consider as a real scroll.
+    private let minOffset: CGFloat = 2.0
+
+    /// Threshold for locking direction: accumulated movement in one consistent
+    /// direction must exceed this before we commit.
+    private let lockThreshold: CGFloat = 5.0
+
+    /// Accumulated movement before direction is locked (tracks net direction).
+    private var preLockAccumulator: CGFloat = 0
+
+    // MARK: - Public API
+
+    /// Add a new captured frame.
+    func addFrame(_ image: NSImage) {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             logMessage("[Stitch] Reject reason=image_conversion_failed")
             return false

@@ -4,7 +4,7 @@ import os.log
 import UniformTypeIdentifiers
 import Sparkle
 
-private let logger = Logger(subsystem: "com.giyyapan.snipshot", category: "main")
+private let logger = Logger(subsystem: "com.meeseek.snipshot-bug", category: "main")
 
 private struct PinPlacement {
     let origin: NSPoint
@@ -132,7 +132,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // Listen for "open settings for translation" notification
         NotificationCenter.default.addObserver(self, selector: #selector(openSettingsForTranslation), name: NSNotification.Name("OpenSettingsForTranslation"), object: nil)
 
+        // Register URL scheme handler for OAuth callback (snipshot://...)
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleGetURL(_:replyEvent:)), forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+
         logMessage("Snipshot v\(kSnipshotVersion) ready. Capture hotkey: \(captureHotkey.displayString), F3 to pin from clipboard.")
+    }
+
+    // MARK: - URL Scheme Handler (snipshot://oauth/notion?access_token=...)
+    @objc func handleGetURL(_ event: NSAppleEventDescriptor, replyEvent: NSAppleEventDescriptor) {
+        guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: urlString),
+              url.scheme == "snipshot",
+              url.host == "oauth",
+              url.path == "/notion" || url.path == "notion"
+        else { return }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems
+        else { return }
+        var tokenDict: [String: String] = [:]
+        for item in queryItems {
+            if let value = item.value {
+                tokenDict[item.name] = value
+            }
+        }
+        guard let token = tokenDict["access_token"], !token.isEmpty else { return }
+        logMessage("Received OAuth token via URL scheme")
+        NotionService.shared.handleOAuthCallback(tokenDict: tokenDict)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -213,7 +238,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         menu.addItem(checkForUpdatesItem)
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettingsFromMenu), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit Snipshot", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
         applyShortcutHealthPresentation()
@@ -514,10 +539,61 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             dismissOverlay()
             startScrollCapture(rect: rect, firstFrame: firstFrame)
 
+        case .notionBug(let image, _):
+            logMessage("Notion Bug: opening input panel.")
+            dismissOverlay()
+            showNotionBugPanel(image: image)
+
         case .cancel:
             logMessage("Capture cancelled.")
             dismissOverlay()
         }
+    }
+
+    // MARK: - Notion Bug
+    private var notionBugPanel: NotionBugPanel?
+
+    private func showNotionBugPanel(image: NSImage) {
+        guard NotionSettings.isAuthorized else {
+            let alert = NSAlert()
+            alert.messageText = "Notion Not Connected"
+            alert.informativeText = "Please connect your Notion account in Settings → Notion."
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn {
+                openSettings(toTab: "notion")
+            }
+            return
+        }
+
+        let panel = NotionBugPanel()
+        panel.onSubmit = { [weak self, weak panel] result in
+            guard let self = self, let panel = panel else { return }
+            let input = NotionBugInput(
+                title: result.title,
+                notes: result.notes,
+                priority: result.priority,
+                feedbackType: result.feedbackType,
+                image: image
+            )
+            NotionService.shared.createBugPage(input: input) { apiResult in
+                switch apiResult {
+                case .success(let pageUrl):
+                    logMessage("Notion Bug created: \(pageUrl)")
+                    panel.showSuccess(pageUrl: pageUrl)
+                case .failure(let error):
+                    logMessage("Notion Bug error: \(error.localizedDescription)")
+                    panel.showError(error.localizedDescription)
+                }
+            }
+        }
+        panel.onCancel = { [weak self] in
+            self?.notionBugPanel = nil
+        }
+        self.notionBugPanel = panel
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func dismissOverlay() {
@@ -673,9 +749,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func openSettingsFromMenu() {
+        openSettings()
+    }
+
     @objc private func openSettingsForTranslation() {
         openSettings()
         settingsWindow?.expandTranslationSection()
+    }
+
+    private func openSettings(toTab tabId: String) {
+        openSettings()
+        settingsWindow?.selectTab(tabId)
     }
 
     // MARK: - Onboarding

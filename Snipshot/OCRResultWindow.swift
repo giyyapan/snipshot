@@ -291,7 +291,10 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
 
     @objc private func copyText() {
         // Copy selected text from VisionKit overlay, or all text if nothing selected
-        let selectedText = ocrOverlay?.selectedText ?? ""
+        var selectedText = ""
+        if #available(macOS 14.0, *) {
+            selectedText = ocrOverlay?.selectedText ?? ""
+        }
         let textToCopy = selectedText.isEmpty ? currentText : selectedText
         guard !textToCopy.isEmpty else { return }
         let pasteboard = NSPasteboard.general
@@ -300,7 +303,6 @@ class OCRResultWindow: NSPanel, NSWindowDelegate {
         logMessage("OCR: copied text to clipboard (\(textToCopy.count) chars)")
         showCopyFeedback()
     }
-
     @objc func aiRefine() {
         guard !currentText.isEmpty else { return }
         guard AISettings.isConfigured else {
