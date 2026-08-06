@@ -382,6 +382,135 @@ class SmallButton: NSView {
     }
 }
 
+// MARK: - FillToggleButton
+/// A compact checkbox-style control whose inactive state stays visible on the
+/// translucent annotation property bar. The system checkbox can lose its box
+/// outline there, especially when the app appearance and fixed light panel
+/// appearance differ.
+final class FillToggleButton: NSView {
+    var onToggle: ((Bool) -> Void)?
+    var isOn: Bool {
+        didSet {
+            updateLabelColor()
+            setAccessibilityValue(isOn ? 1 : 0)
+            needsDisplay = true
+        }
+    }
+
+    private let label = NSTextField(labelWithString: "Fill")
+    private var isHovered = false
+    private var isPressed = false
+
+    init(frame: NSRect, isOn: Bool) {
+        self.isOn = isOn
+        super.init(frame: frame)
+
+        wantsLayer = true
+        label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        label.alignment = .left
+        label.frame = NSRect(x: 23, y: (frame.height - 16) / 2, width: max(0, frame.width - 27), height: 16)
+        label.autoresizingMask = [.width]
+        addSubview(label)
+        updateLabelColor()
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.checkBox)
+        setAccessibilityLabel("Fill")
+        setAccessibilityValue(isOn ? 1 : 0)
+
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        return bounds.contains(local) ? self : nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let controlRect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let controlPath = NSBezierPath(roundedRect: controlRect, xRadius: 4, yRadius: 4)
+
+        if isOn {
+            NSColor.systemBlue.withAlphaComponent(isPressed ? 0.78 : 0.92).setFill()
+            controlPath.fill()
+            NSColor.systemBlue.setStroke()
+        } else {
+            let white = isPressed ? 0.68 : (isHovered ? 0.92 : 0.82)
+            NSColor.white.withAlphaComponent(white).setFill()
+            controlPath.fill()
+            NSColor(white: 0.30, alpha: isHovered ? 0.88 : 0.68).setStroke()
+        }
+        controlPath.lineWidth = 1
+        controlPath.stroke()
+
+        let boxRect = NSRect(x: 5, y: (bounds.height - 13) / 2, width: 13, height: 13)
+        let boxPath = NSBezierPath(roundedRect: boxRect, xRadius: 2.5, yRadius: 2.5)
+        if isOn {
+            NSColor.white.withAlphaComponent(0.18).setFill()
+            boxPath.fill()
+            NSColor.white.withAlphaComponent(0.95).setStroke()
+        } else {
+            NSColor.white.setFill()
+            boxPath.fill()
+            NSColor(white: 0.25, alpha: 0.85).setStroke()
+        }
+        boxPath.lineWidth = 1.25
+        boxPath.stroke()
+
+        if isOn {
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: boxRect.minX + 2.7, y: boxRect.midY))
+            check.line(to: NSPoint(x: boxRect.minX + 5.4, y: boxRect.minY + 3.2))
+            check.line(to: NSPoint(x: boxRect.maxX - 2.2, y: boxRect.maxY - 3.0))
+            check.lineWidth = 1.7
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            NSColor.white.setStroke()
+            check.stroke()
+        }
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        isPressed = false
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isPressed = false
+        let local = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(local) else {
+            needsDisplay = true
+            return
+        }
+        isOn.toggle()
+        onToggle?(isOn)
+    }
+
+    private func updateLabelColor() {
+        label.textColor = isOn ? .white : NSColor(white: 0.24, alpha: 1)
+    }
+}
+
 // MARK: - ColorDot
 class ColorDot: NSView {
     var onPress: (() -> Void)?
