@@ -357,10 +357,16 @@ class AnnotationElement {
     }
 
     /// Bounds used only for the visible editing indicator. Interaction and
-    /// redraw bounds may intentionally be larger, but Mosaic's selection UI
-    /// must coincide with the pixels it replaces.
+    /// redraw bounds intentionally include hit tolerance and glow falloff, but
+    /// the editing frame for every resizable tool stays on its authored
+    /// geometry so its handles sit directly on the dashed border.
     var selectionIndicatorRect: NSRect {
-        tool == .mosaic ? normalizedRect : boundingRect
+        switch tool {
+        case .arrow, .line, .rectangle, .circle, .mosaic, .highlight:
+            return normalizedRect
+        case .text, .marker, .select:
+            return boundingRect
+        }
     }
 
     private var textBoundingRect: NSRect {
@@ -953,23 +959,36 @@ class AnnotationRenderer {
         case .rectangle:
             let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
             let shape = CGPath(rect: rect, transform: nil)
+            if element.isFilled {
+                // Fill + border share one outer silhouette. This removes the
+                // antialiasing seam produced by filling adjacent subpaths.
+                let outset = element.strokeWidth / 2
+                return CGPath(rect: rect.insetBy(dx: -outset, dy: -outset), transform: nil)
+            }
             let border = shape.copy(
                 strokingWithWidth: element.strokeWidth,
                 lineCap: .butt,
                 lineJoin: .miter,
                 miterLimit: 10
             )
-            return shapeSilhouette(shape: shape, border: border, isFilled: element.isFilled)
+            return border
         case .circle:
             let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
             let shape = CGPath(ellipseIn: rect, transform: nil)
+            if element.isFilled {
+                // The user-visible result of a same-color fill and border is
+                // the outer ellipse. A single path guarantees continuous
+                // coverage at the former fill/stroke junction.
+                let outset = element.strokeWidth / 2
+                return CGPath(ellipseIn: rect.insetBy(dx: -outset, dy: -outset), transform: nil)
+            }
             let border = shape.copy(
                 strokingWithWidth: element.strokeWidth,
                 lineCap: .butt,
                 lineJoin: .round,
                 miterLimit: 10
             )
-            return shapeSilhouette(shape: shape, border: border, isFilled: element.isFilled)
+            return border
         case .marker:
             let center = NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy)
             let radius = max(element.strokeWidth * 1.5, 6)
@@ -978,17 +997,6 @@ class AnnotationRenderer {
         default:
             return nil
         }
-    }
-
-    /// A filled shape and its border use one combined silhouette. Drawing the
-    /// color once avoids increasing the alpha where a translucent fill and
-    /// border overlap, while retaining the existing border extent and glow.
-    private static func shapeSilhouette(shape: CGPath, border: CGPath, isFilled: Bool) -> CGPath {
-        guard isFilled else { return border }
-        let silhouette = CGMutablePath()
-        silhouette.addPath(shape)
-        silhouette.addPath(border)
-        return silhouette
     }
 
     private static func arrowSilhouette(for element: AnnotationElement, ox: CGFloat, oy: CGFloat) -> CGPath {

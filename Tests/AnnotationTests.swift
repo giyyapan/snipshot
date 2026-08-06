@@ -19,7 +19,7 @@ private enum AnnotationTests {
         try test("shape fill preference is shared, persistent, and legacy-safe", testShapeFillPreferenceAndCompatibility)
         try test("filled shapes hit their interiors without changing outline hit testing", testShapeFillHitTesting)
         try test("circle and highlight resize from four corners", testBoxResizeHandles)
-        try test("Mosaic selection bounds match its pixels without losing handle tolerance", testMosaicSelectionBounds)
+        try test("resizable selection frames align with their handles", testResizableSelectionBounds)
         try test("new elements participate in move, duplicate, undo, and redo", testStateOperations)
         try test("shape fill survives copy, duplicate, undo, and redo", testShapeFillStateOperations)
         try test("line and circle render as unfilled strokes", testLineAndCircleRendering)
@@ -241,15 +241,21 @@ private enum AnnotationTests {
         try expect(!highlight.hitTest(point: NSPoint(x: 10, y: 10)), "Highlight outside mask should not capture hit testing")
     }
 
-    private static func testMosaicSelectionBounds() throws {
+    private static func testResizableSelectionBounds() throws {
+        for tool in [
+            AnnotationTool.arrow, .line, .rectangle, .circle, .mosaic, .highlight
+        ] {
+            let annotation = element(tool, from: NSPoint(x: 20, y: 18), to: NSPoint(x: 80, y: 62), strokeWidth: 6)
+            try expect(
+                annotation.selectionIndicatorRect == annotation.normalizedRect,
+                "\(tool)'s visible selection frame has extra padding"
+            )
+        }
+
         let mosaic = element(.mosaic, from: NSPoint(x: 20, y: 18), to: NSPoint(x: 80, y: 62), strokeWidth: 6)
-        try expect(
-            mosaic.selectionIndicatorRect == mosaic.normalizedRect,
-            "Mosaic's visible selection frame has extra padding"
-        )
 
         // Handle hit testing keeps its independent 8pt radius even though the
-        // visible frame is exactly the pixelated rectangle.
+        // visible frame is exactly the authored rectangle.
         try expect(
             mosaic.hitTestResizeHandle(point: NSPoint(x: 15, y: 62)) == .topLeft,
             "Mosaic resize handle lost its hit tolerance"
@@ -396,6 +402,17 @@ private enum AnnotationTests {
             try expect(colorsMatch(border, expectedColor, tolerance: 0.02), "\(tool) border changed when Fill was enabled")
             try expect(glow.alphaComponent > 0.005 && glow.alphaComponent < 0.30, "\(tool) glow changed when Fill was enabled")
             try expect(outside.alphaComponent < 0.001, "\(tool) fill escaped its shape")
+
+            // Walk from the original border toward the center. Fill and border
+            // are the same color, so no transparent antialiasing seam may
+            // appear where those regions used to meet.
+            for x in stride(from: 22, through: 55, by: 1) {
+                let sample = try color(in: rendered, at: NSPoint(x: CGFloat(x), y: 45))
+                try expect(
+                    sample.alphaComponent >= expectedColor.alphaComponent - 0.03,
+                    "\(tool) left a gap between Fill and border at x=\(x)"
+                )
+            }
         }
     }
 
