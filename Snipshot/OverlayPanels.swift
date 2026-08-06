@@ -341,7 +341,7 @@ extension OverlayView {
         let widthSectionW = minusBtnW + 4 + widthLabelW + 4 + plusBtnW
         let fillControlW: CGFloat = 54
         let fillSectionW = showFill ? dividerW + fillControlW : 0
-        let mosaicModeW: CGFloat = 108
+        let mosaicModeW: CGFloat = 116
         let mosaicModeSectionW = showMosaicMode ? dividerW + mosaicModeW : 0
         let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + fillSectionW + mosaicModeSectionW + padding
         let h: CGFloat = 28
@@ -414,10 +414,11 @@ extension OverlayView {
             let modeControl = TwoOptionSegmentedControl(
                 frame: NSRect(x: bx, y: (h - 22) / 2, width: mosaicModeW, height: 22),
                 titles: MosaicEffect.allCases.map(\.title),
-                selectedIndex: annoState.mosaicEffect == .mosaic ? 0 : 1
+                selectedIndex: MosaicEffect.allCases.firstIndex(of: annoState.mosaicEffect) ?? 0
             )
             modeControl.onSelect = { [weak self] index in
-                self?.annoState.setMosaicEffect(index == 0 ? .mosaic : .blur)
+                guard MosaicEffect.allCases.indices.contains(index) else { return }
+                self?.annoState.setMosaicEffect(MosaicEffect.allCases[index])
                 self?.refreshSecondaryPanel()
                 self?.needsDisplay = true
             }
@@ -478,7 +479,7 @@ extension OverlayView {
         let widthSectionW = minusBtnW + 4 + widthLabelW + 4 + plusBtnW
         let fillControlW: CGFloat = 54
         let fillSectionW = showFill ? dividerW + fillControlW : 0
-        let mosaicModeW: CGFloat = 108
+        let mosaicModeW: CGFloat = 116
         let mosaicModeSectionW = showMosaicMode ? dividerW + mosaicModeW : 0
         let actionBtnSize: CGFloat = 22
         let actionSpacing: CGFloat = 2
@@ -560,10 +561,11 @@ extension OverlayView {
             let modeControl = TwoOptionSegmentedControl(
                 frame: NSRect(x: bx, y: (h - 22) / 2, width: mosaicModeW, height: 22),
                 titles: MosaicEffect.allCases.map(\.title),
-                selectedIndex: element.mosaicEffect == .mosaic ? 0 : 1
+                selectedIndex: MosaicEffect.allCases.firstIndex(of: element.mosaicEffect) ?? 0
             )
             modeControl.onSelect = { [weak self] index in
-                self?.annoState.setMosaicEffect(index == 0 ? .mosaic : .blur, for: element)
+                guard MosaicEffect.allCases.indices.contains(index) else { return }
+                self?.annoState.setMosaicEffect(MosaicEffect.allCases[index], for: element)
                 self?.refreshSecondaryPanel()
                 self?.needsDisplay = true
             }

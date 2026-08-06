@@ -237,7 +237,7 @@ private enum AnnotationTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let state = AnnotationState(userDefaults: defaults)
-        try expect(state.mosaicEffect == .mosaic, "legacy/default Mosaic effect should remain pixelation")
+        try expect(state.mosaicEffect == .blur, "new/default Mosaic effect should be Blur")
 
         state.setMosaicEffect(.blur)
         let blurred = state.makeElement(

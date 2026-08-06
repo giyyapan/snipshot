@@ -547,37 +547,49 @@ final class TwoOptionSegmentedControl: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let outerRect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 4, yRadius: 4)
-        NSColor.white.withAlphaComponent(0.82).setFill()
+        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 6, yRadius: 6)
+        NSColor(white: 0.82, alpha: 0.72).setFill()
         outerPath.fill()
-        NSColor(white: 0.30, alpha: 0.68).setStroke()
+        NSColor.black.withAlphaComponent(0.14).setStroke()
         outerPath.lineWidth = 1
         outerPath.stroke()
 
         let segmentWidth = bounds.width / 2
         let selectedRect = NSRect(
-            x: CGFloat(selectedIndex) * segmentWidth + 1.5,
-            y: 1.5,
-            width: segmentWidth - 3,
-            height: bounds.height - 3
+            x: CGFloat(selectedIndex) * segmentWidth + 2,
+            y: 2,
+            width: segmentWidth - 4,
+            height: bounds.height - 4
         )
-        NSColor.systemBlue.withAlphaComponent(0.92).setFill()
-        NSBezierPath(roundedRect: selectedRect, xRadius: 3, yRadius: 3).fill()
+        let selectedPath = NSBezierPath(roundedRect: selectedRect, xRadius: 4.5, yRadius: 4.5)
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.16)
+        shadow.shadowBlurRadius = 1.5
+        shadow.shadowOffset = NSSize(width: 0, height: -0.5)
+        shadow.set()
+        NSColor.white.withAlphaComponent(0.96).setFill()
+        selectedPath.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.systemBlue.withAlphaComponent(0.55).setStroke()
+        selectedPath.lineWidth = 1
+        selectedPath.stroke()
 
         if let hoveredIndex, hoveredIndex != selectedIndex {
             let hoverRect = NSRect(
-                x: CGFloat(hoveredIndex) * segmentWidth + 1.5,
-                y: 1.5,
-                width: segmentWidth - 3,
-                height: bounds.height - 3
+                x: CGFloat(hoveredIndex) * segmentWidth + 2,
+                y: 2,
+                width: segmentWidth - 4,
+                height: bounds.height - 4
             )
-            NSColor.systemBlue.withAlphaComponent(pressedIndex == hoveredIndex ? 0.16 : 0.09).setFill()
-            NSBezierPath(roundedRect: hoverRect, xRadius: 3, yRadius: 3).fill()
+            NSColor.white.withAlphaComponent(pressedIndex == hoveredIndex ? 0.72 : 0.48).setFill()
+            NSBezierPath(roundedRect: hoverRect, xRadius: 4.5, yRadius: 4.5).fill()
         }
 
         for (index, title) in titles.enumerated() {
-            let font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
-            let color: NSColor = index == selectedIndex ? .white : NSColor(white: 0.24, alpha: 1)
+            let isSelected = index == selectedIndex
+            let font = NSFont.systemFont(ofSize: 10.5, weight: isSelected ? .semibold : .medium)
+            let color: NSColor = isSelected ? .systemBlue : NSColor(white: 0.34, alpha: 1)
             let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
             let size = (title as NSString).size(withAttributes: attributes)
             let origin = NSPoint(

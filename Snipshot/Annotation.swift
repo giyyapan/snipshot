@@ -2,8 +2,8 @@ import Cocoa
 import Accelerate
 
 enum MosaicEffect: String, CaseIterable {
-    case mosaic
     case blur
+    case mosaic
 
     var title: String {
         switch self {
@@ -674,7 +674,7 @@ class AnnotationState {
         }
     }
 
-    var mosaicEffect: MosaicEffect = .mosaic {
+    var mosaicEffect: MosaicEffect = .blur {
         didSet {
             userDefaults.set(mosaicEffect.rawValue, forKey: Self.mosaicEffectKey)
         }
