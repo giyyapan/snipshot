@@ -16,14 +16,19 @@ private enum AnnotationTests {
         try test("toolbar menu rows hit test in their parent coordinates", testToolbarMenuItemHitTesting)
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
         try test("circle geometry only hits the ellipse border", testCircleGeometry)
+        try test("shape fill preference is shared, persistent, and legacy-safe", testShapeFillPreferenceAndCompatibility)
+        try test("filled shapes hit their interiors without changing outline hit testing", testShapeFillHitTesting)
         try test("circle and highlight resize from four corners", testBoxResizeHandles)
         try test("new elements participate in move, duplicate, undo, and redo", testStateOperations)
+        try test("shape fill survives copy, duplicate, undo, and redo", testShapeFillStateOperations)
         try test("line and circle render as unfilled strokes", testLineAndCircleRendering)
+        try test("filled rectangles and circles render the selected color", testFilledShapeRendering)
         try test("highlight renders a stronger outside dim and lighter focus", testHighlightRendering)
         try test("glow style is shared, scoped, and scales with stroke width", testGlowStyleAndBounds)
         try test("vector and marker tools render a clear edge glow", testVectorGlowRendering)
         try test("glow preserves the sharp vector body color and alpha", testGlowPreservesBodyColorAndAlpha)
         try test("overlay and export share rendering without exporting selection UI", testOverlayAndExportRendering)
+        try test("filled shape overlay preview matches final export", testFilledOverlayAndExportRendering)
         try test("vector glow clips safely at screenshot edges", testGlowAtScreenshotEdges)
         try test("text typography supports English, Chinese, and mixed content", testTextTypographyAndFallback)
         try test("text layout handles empty, single-line, and explicit newlines", testTextLayoutVariants)
@@ -149,6 +154,77 @@ private enum AnnotationTests {
         try expect(!element(.circle, from: .zero, to: NSPoint(x: 20, y: 2)).hasRenderableGeometry, "flat Circle should not be committed")
     }
 
+    private static func testShapeFillPreferenceAndCompatibility() throws {
+        let suiteName = "AnnotationTests.shapeFillPreference.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            throw AnnotationTestFailure(message: "could not create isolated shape-fill defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let state = AnnotationState(userDefaults: defaults)
+        try expect(!state.shapeFillEnabled, "shape Fill should default off")
+
+        let legacyRectangle = element(.rectangle, from: NSPoint(x: 10, y: 10), to: NSPoint(x: 60, y: 50))
+        try expect(!legacyRectangle.isFilled, "legacy element initializer did not default to outline-only")
+        try expect(!legacyRectangle.copy().isFilled, "copy changed a legacy unfilled element")
+
+        state.currentTool = .rectangle
+        state.setFillEnabled(true)
+        let rectangle = state.makeElement(
+            tool: .rectangle,
+            color: .systemRed,
+            strokeWidth: 3,
+            startPoint: NSPoint(x: 10, y: 10),
+            endPoint: NSPoint(x: 60, y: 50)
+        )
+        try expect(rectangle.isFilled, "Rectangle did not snapshot the shared Fill preference")
+
+        state.currentTool = .select
+        state.currentTool = .text
+        let circle = state.makeElement(
+            tool: .circle,
+            color: .systemBlue,
+            strokeWidth: 3,
+            startPoint: NSPoint(x: 15, y: 15),
+            endPoint: NSPoint(x: 65, y: 55)
+        )
+        try expect(state.shapeFillEnabled && circle.isFilled, "switching tools overwrote the shared shape Fill preference")
+
+        let line = state.makeElement(
+            tool: .line,
+            color: .systemBlue,
+            strokeWidth: 3,
+            startPoint: .zero,
+            endPoint: NSPoint(x: 50, y: 0)
+        )
+        try expect(!line.isFilled, "shared shape Fill leaked into a non-shape element")
+
+        state.setFillEnabled(false)
+        try expect(rectangle.isFilled && circle.isFilled, "changing the tool preference rewrote existing element snapshots")
+        state.elements = [legacyRectangle]
+        state.setFillEnabled(true, for: legacyRectangle)
+        try expect(legacyRectangle.isFilled, "selected legacy element could not enable Fill")
+        try expect(!state.shapeFillEnabled, "editing an existing element overwrote the tool Fill preference")
+
+        state.setFillEnabled(true)
+        let restoredState = AnnotationState(userDefaults: defaults)
+        try expect(restoredState.shapeFillEnabled, "shared shape Fill preference was not persisted")
+    }
+
+    private static func testShapeFillHitTesting() throws {
+        let rectangle = element(.rectangle, from: NSPoint(x: 10, y: 10), to: NSPoint(x: 90, y: 70), strokeWidth: 3)
+        try expect(rectangle.hitTest(point: NSPoint(x: 50, y: 10)), "unfilled Rectangle missed its border")
+        try expect(!rectangle.hitTest(point: NSPoint(x: 50, y: 40)), "unfilled Rectangle hit its interior")
+        rectangle.isFilled = true
+        try expect(rectangle.hitTest(point: NSPoint(x: 50, y: 40)), "filled Rectangle missed its interior")
+
+        let circle = element(.circle, from: NSPoint(x: 10, y: 10), to: NSPoint(x: 90, y: 70), strokeWidth: 3)
+        try expect(!circle.hitTest(point: NSPoint(x: 50, y: 40)), "unfilled Circle hit its interior")
+        circle.isFilled = true
+        try expect(circle.hitTest(point: NSPoint(x: 50, y: 40)), "filled Circle missed its interior")
+        try expect(!circle.hitTest(point: NSPoint(x: 12, y: 68)), "filled Circle hit a corner outside the ellipse")
+    }
+
     private static func testBoxResizeHandles() throws {
         for tool in [AnnotationTool.circle, .highlight] {
             let box = element(tool, from: NSPoint(x: 10, y: 10), to: NSPoint(x: 50, y: 40))
@@ -193,6 +269,33 @@ private enum AnnotationTests {
         try expect(state.elements.count == beforeCount, "singular Highlight was duplicated")
     }
 
+    private static func testShapeFillStateOperations() throws {
+        let state = AnnotationState()
+        let original = element(.rectangle, from: NSPoint(x: 20, y: 20), to: NSPoint(x: 80, y: 60))
+        original.isFilled = true
+        try expect(original.copy().isFilled, "element copy dropped Fill")
+
+        state.elements = [original]
+        state.selectedElementId = original.id
+        state.duplicateSelected()
+        try expect(state.elements.count == 2, "filled Rectangle was not duplicated")
+        try expect(state.selectedElement?.isFilled == true, "duplicate dropped Fill")
+
+        state.undo()
+        try expect(state.elements.count == 1 && state.elements[0].isFilled, "duplicate undo lost the filled original")
+        state.redo()
+        try expect(state.elements.count == 2 && state.elements.allSatisfy { $0.isFilled }, "duplicate redo lost Fill")
+
+        let edited = state.elements[0]
+        state.selectedElementId = edited.id
+        state.setFillEnabled(false, for: edited)
+        try expect(!edited.isFilled, "selected element Fill edit was not applied")
+        state.undo()
+        try expect(state.elements[0].isFilled, "Fill undo did not restore the element snapshot")
+        state.redo()
+        try expect(!state.elements[0].isFilled, "Fill redo did not restore the edited value")
+    }
+
     private static func testLineAndCircleRendering() throws {
         let size = NSSize(width: 100, height: 80)
         let transparent = makeSolidImage(size: size, color: .clear)
@@ -222,6 +325,29 @@ private enum AnnotationTests {
         let circleCenter = try color(in: circleImage, at: NSPoint(x: 50, y: 40))
         try expect(circleBorder.alphaComponent > 0.2, "Circle border was not rendered")
         try expect(circleCenter.alphaComponent < 0.1, "Circle interior was filled")
+    }
+
+    private static func testFilledShapeRendering() throws {
+        let size = NSSize(width: 110, height: 90)
+        let fillColor = NSColor(deviceRed: 0.16, green: 0.68, blue: 0.34, alpha: 0.62)
+        let expected = makeSolidImage(size: size, color: fillColor)
+        let expectedColor = try color(in: expected, at: NSPoint(x: 55, y: 45))
+
+        for tool in [AnnotationTool.rectangle, .circle] {
+            let shape = element(tool, from: NSPoint(x: 20, y: 15), to: NSPoint(x: 90, y: 75), strokeWidth: 4)
+            shape.color = fillColor
+            shape.isFilled = true
+            let rendered = renderExport(shape, size: size)
+            let center = try color(in: rendered, at: NSPoint(x: 55, y: 45))
+            let border = try color(in: rendered, at: NSPoint(x: 55, y: 75))
+            let glow = try color(in: rendered, at: NSPoint(x: 55, y: 79))
+            let outside = try color(in: rendered, at: NSPoint(x: 5, y: 5))
+
+            try expect(colorsMatch(center, expectedColor, tolerance: 0.02), "\(tool) fill did not use the border color")
+            try expect(colorsMatch(border, expectedColor, tolerance: 0.02), "\(tool) border changed when Fill was enabled")
+            try expect(glow.alphaComponent > 0.005 && glow.alphaComponent < 0.30, "\(tool) glow changed when Fill was enabled")
+            try expect(outside.alphaComponent < 0.001, "\(tool) fill escaped its shape")
+        }
     }
 
     private static func testHighlightRendering() throws {
@@ -346,6 +472,35 @@ private enum AnnotationTests {
         let exportSelectionPixels = try countSelectionBluePixels(in: exported)
         try expect(overlaySelectionPixels > 0, "selected overlay did not render its editing UI")
         try expect(exportSelectionPixels == 0, "selection box or resize handles leaked into export")
+    }
+
+    private static func testFilledOverlayAndExportRendering() throws {
+        let size = NSSize(width: 110, height: 90)
+        for tool in [AnnotationTool.rectangle, .circle] {
+            let annotation = element(tool, from: NSPoint(x: 25, y: 20), to: NSPoint(x: 85, y: 70), strokeWidth: 4)
+            annotation.color = .systemPurple
+            annotation.isFilled = true
+
+            let overlay = renderDirect(annotation, size: size, isSelected: false)
+            let exported = renderExport(annotation, size: size)
+            let points = [
+                NSPoint(x: 55, y: 45),
+                NSPoint(x: 55, y: 70),
+                NSPoint(x: 55, y: 75),
+                NSPoint(x: 5, y: 5)
+            ]
+            for point in points {
+                let overlayColor = try color(in: overlay, at: point)
+                let exportColor = try color(in: exported, at: point)
+                try expect(colorsMatch(overlayColor, exportColor, tolerance: 0.01), "filled \(tool) overlay/export rendering diverged at \(point)")
+            }
+
+            let selectedOverlay = renderDirect(annotation, size: size, isSelected: true)
+            let overlaySelectionPixels = try countSelectionBluePixels(in: selectedOverlay)
+            let exportSelectionPixels = try countSelectionBluePixels(in: exported)
+            try expect(overlaySelectionPixels > 0, "filled \(tool) selection UI disappeared")
+            try expect(exportSelectionPixels == 0, "filled \(tool) selection UI leaked into export")
+        }
     }
 
     private static func testGlowAtScreenshotEdges() throws {

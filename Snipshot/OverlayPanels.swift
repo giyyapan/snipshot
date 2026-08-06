@@ -320,6 +320,7 @@ extension OverlayView {
     private func showToolPropertyPanel(barFrame: NSRect, tool: AnnotationTool) {
         guard tool != .highlight else { return }
         let showColors = tool.showsColorControls
+        let showFill = tool.supportsShapeFill
         let colors = AnnotationState.availableColors
         let colorSize: CGFloat = 18
         let colorSpacing: CGFloat = 3
@@ -337,7 +338,9 @@ extension OverlayView {
         let plusBtnW: CGFloat = 18
         let widthLabelW = swSize.width + 8
         let widthSectionW = minusBtnW + 4 + widthLabelW + 4 + plusBtnW
-        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + padding
+        let fillControlW: CGFloat = 48
+        let fillSectionW = showFill ? dividerW + fillControlW : 0
+        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + fillSectionW + padding
         let h: CGFloat = 28
 
         let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
@@ -395,6 +398,29 @@ extension OverlayView {
             self?.needsDisplay = true
         }
         panel.addSubview(plusBtn)
+        bx += plusBtnW
+
+        if showFill {
+            bx += dividerW / 2
+            let fillDivider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
+            fillDivider.wantsLayer = true
+            fillDivider.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+            panel.addSubview(fillDivider)
+            bx += dividerW / 2
+
+            let fillButton = NSButton(checkboxWithTitle: "Fill", target: self, action: #selector(toggleShapeFill(_:)))
+            fillButton.controlSize = .small
+            fillButton.attributedTitle = NSAttributedString(
+                string: "Fill",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .foregroundColor: NSColor(white: 0.35, alpha: 1)
+                ]
+            )
+            fillButton.state = annoState.shapeFillEnabled ? .on : .off
+            fillButton.frame = NSRect(x: bx, y: (h - 20) / 2, width: fillControlW, height: 20)
+            panel.addSubview(fillButton)
+        }
 
         addSubview(panel)
         secondaryPanelView = panel
@@ -408,6 +434,7 @@ extension OverlayView {
         }
         let elementTool = element.tool
         let showColors = elementTool.showsColorControls
+        let showFill = elementTool.supportsShapeFill
         let colors = AnnotationState.availableColors
         let colorSize: CGFloat = 18
         let colorSpacing: CGFloat = 3
@@ -425,10 +452,12 @@ extension OverlayView {
         let plusBtnW: CGFloat = 18
         let widthLabelW = swSize.width + 8
         let widthSectionW = minusBtnW + 4 + widthLabelW + 4 + plusBtnW
+        let fillControlW: CGFloat = 48
+        let fillSectionW = showFill ? dividerW + fillControlW : 0
         let actionBtnSize: CGFloat = 22
         let actionSpacing: CGFloat = 2
         let actionSectionW = actionBtnSize * 2 + actionSpacing  // delete + duplicate
-        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + dividerW + actionSectionW + padding
+        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + fillSectionW + dividerW + actionSectionW + padding
         let h: CGFloat = 28
 
         let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
@@ -494,6 +523,29 @@ extension OverlayView {
         panel.addSubview(plusBtn)
         bx += plusBtnW
 
+        if showFill {
+            bx += dividerW / 2
+            let fillDivider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
+            fillDivider.wantsLayer = true
+            fillDivider.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+            panel.addSubview(fillDivider)
+            bx += dividerW / 2
+
+            let fillButton = NSButton(checkboxWithTitle: "Fill", target: self, action: #selector(toggleShapeFill(_:)))
+            fillButton.controlSize = .small
+            fillButton.attributedTitle = NSAttributedString(
+                string: "Fill",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .foregroundColor: NSColor(white: 0.35, alpha: 1)
+                ]
+            )
+            fillButton.state = element.isFilled ? .on : .off
+            fillButton.frame = NSRect(x: bx, y: (h - 20) / 2, width: fillControlW, height: 20)
+            panel.addSubview(fillButton)
+            bx += fillControlW
+        }
+
         // Divider before action buttons
         bx += dividerW / 2
         let actionDivider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
@@ -527,6 +579,17 @@ extension OverlayView {
 
         addSubview(panel)
         secondaryPanelView = panel
+    }
+
+    @objc private func toggleShapeFill(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        if let selected = annoState.selectedElement, selected.tool.supportsShapeFill {
+            annoState.setFillEnabled(enabled, for: selected)
+        } else if let tool = annoState.currentTool, tool.supportsShapeFill {
+            annoState.setFillEnabled(enabled)
+        }
+        refreshSecondaryPanel()
+        needsDisplay = true
     }
 
     /// Highlight is a single global spotlight effect, so its selected-state
