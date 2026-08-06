@@ -70,6 +70,10 @@ enum AnnotationTool: String, CaseIterable {
     var usesStrokeWidth: Bool {
         return self != .select && self != .highlight
     }
+
+    var supportsShapeFill: Bool {
+        return self == .rectangle || self == .circle
+    }
 }
 
 // MARK: - Annotation Glow
@@ -278,17 +282,35 @@ class AnnotationElement {
     var endPoint: NSPoint
     var text: String = ""
     var markerNumber: Int = 0
+    /// Stored per element so later tool preference changes do not alter
+    /// existing annotations. The default keeps legacy call sites unfilled.
+    var isFilled: Bool
 
-    init(tool: AnnotationTool, color: NSColor, strokeWidth: CGFloat, startPoint: NSPoint, endPoint: NSPoint) {
+    init(
+        tool: AnnotationTool,
+        color: NSColor,
+        strokeWidth: CGFloat,
+        startPoint: NSPoint,
+        endPoint: NSPoint,
+        isFilled: Bool = false
+    ) {
         self.tool = tool
         self.color = color
         self.strokeWidth = strokeWidth
         self.startPoint = startPoint
         self.endPoint = endPoint
+        self.isFilled = tool.supportsShapeFill && isFilled
     }
 
     func copy() -> AnnotationElement {
-        let c = AnnotationElement(tool: tool, color: color, strokeWidth: strokeWidth, startPoint: startPoint, endPoint: endPoint)
+        let c = AnnotationElement(
+            tool: tool,
+            color: color,
+            strokeWidth: strokeWidth,
+            startPoint: startPoint,
+            endPoint: endPoint,
+            isFilled: isFilled
+        )
         c.id = id
         c.text = text
         c.markerNumber = markerNumber
@@ -359,6 +381,7 @@ class AnnotationElement {
         case .rectangle:
             let r = normalizedRect
             let outer = r.insetBy(dx: -max(strokeWidth, 4), dy: -max(strokeWidth, 4))
+            if isFilled { return outer.contains(point) }
             let inner = r.insetBy(dx: max(strokeWidth, 4), dy: max(strokeWidth, 4))
             return outer.contains(point) && (inner.width <= 0 || inner.height <= 0 || !inner.contains(point))
         case .circle:
@@ -498,6 +521,7 @@ class AnnotationElement {
         let outerY = radiusY + tolerance
         let normalizedOuter = pow((point.x - centerX) / outerX, 2) + pow((point.y - centerY) / outerY, 2)
         guard normalizedOuter <= 1 else { return false }
+        if isFilled { return true }
 
         let innerX = radiusX - tolerance
         let innerY = radiusY - tolerance
@@ -527,6 +551,7 @@ class AnnotationState {
     private static let colorKey = "annoColor"
     private static let strokeKey = "annoStrokeWidths"
     private static let rememberedGroupToolsKey = "annoRememberedGroupTools"
+    private static let shapeFillKey = "annoShapeFillEnabled"
 
     private let userDefaults: UserDefaults
 
@@ -605,6 +630,15 @@ class AnnotationState {
         }
     }
 
+    /// Rectangle and Circle deliberately share one creation preference. It is
+    /// independent from selection so inspecting an old element cannot change
+    /// the Fill value used by the next shape.
+    var shapeFillEnabled: Bool = false {
+        didSet {
+            userDefaults.set(shapeFillEnabled, forKey: Self.shapeFillKey)
+        }
+    }
+
     var elements: [AnnotationElement] = []
     var selectedElementId: UUID? = nil
     var selectedElementIds: Set<UUID> = []  // for multi-select
@@ -636,6 +670,8 @@ class AnnotationState {
                 rememberedGroupTools[groupKey] = tool
             }
         }
+
+        shapeFillEnabled = userDefaults.bool(forKey: Self.shapeFillKey)
     }
 
     private func persistRememberedGroupTools() {
@@ -654,7 +690,7 @@ class AnnotationState {
 
     /// Tracks the type of the last debounced property change so only same-type changes merge.
     enum PropertyChangeKind: Equatable {
-        case color, strokeWidth, text
+        case color, strokeWidth, fill, text
     }
 
     private var propertyUndoTimer: Timer?
@@ -701,7 +737,8 @@ class AnnotationState {
         var same = true
         for (a, b) in zip(lastSnapshot, elements) {
             if a.id != b.id || a.startPoint != b.startPoint || a.endPoint != b.endPoint ||
-               a.strokeWidth != b.strokeWidth || !a.color.isEqual(to: b.color) || a.text != b.text {
+               a.strokeWidth != b.strokeWidth || !a.color.isEqual(to: b.color) ||
+               a.isFilled != b.isFilled || a.text != b.text {
                 same = false
                 break
             }
@@ -738,6 +775,33 @@ class AnnotationState {
                 strokeWidths[tool] = newValue
             }
         }
+    }
+
+    func makeElement(
+        tool: AnnotationTool,
+        color: NSColor,
+        strokeWidth: CGFloat,
+        startPoint: NSPoint,
+        endPoint: NSPoint
+    ) -> AnnotationElement {
+        AnnotationElement(
+            tool: tool,
+            color: color,
+            strokeWidth: strokeWidth,
+            startPoint: startPoint,
+            endPoint: endPoint,
+            isFilled: tool.supportsShapeFill && shapeFillEnabled
+        )
+    }
+
+    func setFillEnabled(_ enabled: Bool, for element: AnnotationElement? = nil) {
+        guard let element else {
+            shapeFillEnabled = enabled
+            return
+        }
+        guard element.tool.supportsShapeFill, element.isFilled != enabled else { return }
+        pushUndoForPropertyChange(kind: .fill)
+        element.isFilled = enabled
     }
 
     func adjustStrokeWidth(delta: CGFloat) {
@@ -888,20 +952,24 @@ class AnnotationRenderer {
             )
         case .rectangle:
             let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
-            return CGPath(rect: rect, transform: nil).copy(
+            let shape = CGPath(rect: rect, transform: nil)
+            let border = shape.copy(
                 strokingWithWidth: element.strokeWidth,
                 lineCap: .butt,
                 lineJoin: .miter,
                 miterLimit: 10
             )
+            return shapeSilhouette(shape: shape, border: border, isFilled: element.isFilled)
         case .circle:
             let rect = element.normalizedRect.offsetBy(dx: ox, dy: oy)
-            return CGPath(ellipseIn: rect, transform: nil).copy(
+            let shape = CGPath(ellipseIn: rect, transform: nil)
+            let border = shape.copy(
                 strokingWithWidth: element.strokeWidth,
                 lineCap: .butt,
                 lineJoin: .round,
                 miterLimit: 10
             )
+            return shapeSilhouette(shape: shape, border: border, isFilled: element.isFilled)
         case .marker:
             let center = NSPoint(x: element.startPoint.x + ox, y: element.startPoint.y + oy)
             let radius = max(element.strokeWidth * 1.5, 6)
@@ -910,6 +978,17 @@ class AnnotationRenderer {
         default:
             return nil
         }
+    }
+
+    /// A filled shape and its border use one combined silhouette. Drawing the
+    /// color once avoids increasing the alpha where a translucent fill and
+    /// border overlap, while retaining the existing border extent and glow.
+    private static func shapeSilhouette(shape: CGPath, border: CGPath, isFilled: Bool) -> CGPath {
+        guard isFilled else { return border }
+        let silhouette = CGMutablePath()
+        silhouette.addPath(shape)
+        silhouette.addPath(border)
+        return silhouette
     }
 
     private static func arrowSilhouette(for element: AnnotationElement, ox: CGFloat, oy: CGFloat) -> CGPath {

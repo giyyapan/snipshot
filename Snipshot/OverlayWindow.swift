@@ -1272,7 +1272,13 @@ class OverlayView: NSView {
                 } else {
                     annotationDrawStart = localPt
                     let sw = annoState.strokeWidths[tool] ?? 3
-                    currentAnnotationElement = AnnotationElement(tool: tool, color: annoState.currentColor, strokeWidth: sw, startPoint: localPt, endPoint: localPt)
+                    currentAnnotationElement = annoState.makeElement(
+                        tool: tool,
+                        color: annoState.currentColor,
+                        strokeWidth: sw,
+                        startPoint: localPt,
+                        endPoint: localPt
+                    )
                     mode = .drawingAnnotation
                     needsDisplay = true
                     return
@@ -1348,7 +1354,13 @@ class OverlayView: NSView {
                     } else {
                         annotationDrawStart = localPt
                         let sw = annoState.strokeWidths[tool] ?? 3
-                        currentAnnotationElement = AnnotationElement(tool: tool, color: annoState.currentColor, strokeWidth: sw, startPoint: localPt, endPoint: localPt)
+                        currentAnnotationElement = annoState.makeElement(
+                            tool: tool,
+                            color: annoState.currentColor,
+                            strokeWidth: sw,
+                            startPoint: localPt,
+                            endPoint: localPt
+                        )
                         mode = .drawingAnnotation
                         needsDisplay = true
                         return
