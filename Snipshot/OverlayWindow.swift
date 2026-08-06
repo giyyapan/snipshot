@@ -339,9 +339,7 @@ class OverlayView: NSView {
         if !annoState.elements.isEmpty {
             return AnnotationRenderer.renderAnnotationsOntoImage(
                 baseImage: baseImage,
-                annotations: annoState.elements,
-                selectionRect: selectionRect,
-                screenshot: screenshot
+                annotations: annoState.elements
             )
         }
 
@@ -988,6 +986,10 @@ class OverlayView: NSView {
             if let context = NSGraphicsContext.current {
                 context.cgContext.saveGState()
                 context.cgContext.clip(to: selectionRect)
+                let mosaicSource = AnnotationMosaicSource(
+                    image: screenshot,
+                    selectionOriginInImage: selectionRect.origin
+                )
 
                 // Draw mosaic elements first (bottom layer) so they only pixelate the original image
                 for element in annoState.elements where element.tool == .mosaic {
@@ -997,8 +999,8 @@ class OverlayView: NSView {
                         in: context,
                         selectionOrigin: selectionRect.origin,
                         isSelected: isSelected,
-                        screenshot: screenshot,
-                        selectionRect: selectionRect
+                        mosaicSource: mosaicSource,
+                        selectionSize: selectionRect.size
                     )
                 }
                 if let current = currentAnnotationElement, current.tool == .mosaic {
@@ -1007,8 +1009,8 @@ class OverlayView: NSView {
                         in: context,
                         selectionOrigin: selectionRect.origin,
                         isSelected: false,
-                        screenshot: screenshot,
-                        selectionRect: selectionRect
+                        mosaicSource: mosaicSource,
+                        selectionSize: selectionRect.size
                     )
                 }
 
@@ -1022,8 +1024,7 @@ class OverlayView: NSView {
                             in: context,
                             selectionOrigin: selectionRect.origin,
                             isSelected: isSelected,
-                            screenshot: screenshot,
-                            selectionRect: selectionRect
+                            selectionSize: selectionRect.size
                         )
                     }
                 }
@@ -1033,8 +1034,7 @@ class OverlayView: NSView {
                         in: context,
                         selectionOrigin: selectionRect.origin,
                         isSelected: false,
-                        screenshot: screenshot,
-                        selectionRect: selectionRect
+                        selectionSize: selectionRect.size
                     )
                 }
 
@@ -1050,8 +1050,7 @@ class OverlayView: NSView {
                         in: context,
                         selectionOrigin: selectionRect.origin,
                         isSelected: isSelected,
-                        screenshot: screenshot,
-                        selectionRect: selectionRect
+                        selectionSize: selectionRect.size
                     )
                 }
                 if let current = currentAnnotationElement, current.tool != .mosaic && current.tool != .highlight {
@@ -1060,8 +1059,7 @@ class OverlayView: NSView {
                         in: context,
                         selectionOrigin: selectionRect.origin,
                         isSelected: false,
-                        screenshot: screenshot,
-                        selectionRect: selectionRect
+                        selectionSize: selectionRect.size
                     )
                 }
 

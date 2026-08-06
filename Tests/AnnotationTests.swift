@@ -17,6 +17,7 @@ private enum AnnotationTests {
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
         try test("circle geometry only hits the ellipse border", testCircleGeometry)
         try test("circle and highlight resize from four corners", testBoxResizeHandles)
+        try test("Mosaic selection bounds match its pixels without losing handle tolerance", testMosaicSelectionBounds)
         try test("new elements participate in move, duplicate, undo, and redo", testStateOperations)
         try test("line and circle render as unfilled strokes", testLineAndCircleRendering)
         try test("highlight renders a stronger outside dim and lighter focus", testHighlightRendering)
@@ -24,6 +25,7 @@ private enum AnnotationTests {
         try test("vector and marker tools render a clear edge glow", testVectorGlowRendering)
         try test("glow preserves the sharp vector body color and alpha", testGlowPreservesBodyColorAndAlpha)
         try test("overlay and export share rendering without exporting selection UI", testOverlayAndExportRendering)
+        try test("Mosaic preview and export sample the same frozen selection pixels", testMosaicFrozenSourceAlignment)
         try test("vector glow clips safely at screenshot edges", testGlowAtScreenshotEdges)
         try test("text typography supports English, Chinese, and mixed content", testTextTypographyAndFallback)
         try test("text layout handles empty, single-line, and explicit newlines", testTextLayoutVariants)
@@ -163,6 +165,57 @@ private enum AnnotationTests {
         try expect(!highlight.hitTest(point: NSPoint(x: 10, y: 10)), "Highlight outside mask should not capture hit testing")
     }
 
+    private static func testMosaicSelectionBounds() throws {
+        let mosaic = element(.mosaic, from: NSPoint(x: 20, y: 18), to: NSPoint(x: 80, y: 62), strokeWidth: 6)
+        try expect(
+            mosaic.selectionIndicatorRect == mosaic.normalizedRect,
+            "Mosaic's visible selection frame has extra padding"
+        )
+
+        // Handle hit testing keeps its independent 8pt radius even though the
+        // visible frame is exactly the pixelated rectangle.
+        try expect(
+            mosaic.hitTestResizeHandle(point: NSPoint(x: 15, y: 62)) == .topLeft,
+            "Mosaic resize handle lost its hit tolerance"
+        )
+        try expect(
+            mosaic.selectionIndicatorRect.minX == 20,
+            "Mosaic handle tolerance leaked into the visible selection frame"
+        )
+
+        let canvasSize = NSSize(width: 100, height: 80)
+        let sourceImage = makeSolidImage(size: canvasSize, color: .clear)
+        let selectedRendering = makeSolidImage(size: canvasSize, color: .clear)
+        selectedRendering.lockFocus()
+        if let context = NSGraphicsContext.current {
+            AnnotationRenderer.draw(
+                element: mosaic,
+                in: context,
+                selectionOrigin: .zero,
+                isSelected: true,
+                mosaicSource: AnnotationMosaicSource(
+                    image: sourceImage,
+                    selectionOriginInImage: .zero
+                ),
+                selectionSize: canvasSize
+            )
+        }
+        selectedRendering.unlockFocus()
+
+        var bluePixelsAtOldPadding = 0
+        var bluePixelsAtActualEdge = 0
+        for y in stride(from: CGFloat(28), through: 52, by: 1) {
+            if isSelectionBlue(try color(in: selectedRendering, at: NSPoint(x: 14, y: y))) {
+                bluePixelsAtOldPadding += 1
+            }
+            if isSelectionBlue(try color(in: selectedRendering, at: NSPoint(x: 20, y: y))) {
+                bluePixelsAtActualEdge += 1
+            }
+        }
+        try expect(bluePixelsAtOldPadding == 0, "Mosaic still rendered a selection line at the old padded edge")
+        try expect(bluePixelsAtActualEdge > 0, "Mosaic did not render its selection line on the pixel edge")
+    }
+
     private static func testStateOperations() throws {
         let state = AnnotationState()
         let line = element(.line, from: NSPoint(x: 10, y: 20), to: NSPoint(x: 80, y: 20))
@@ -201,9 +254,7 @@ private enum AnnotationTests {
         line.color = .systemRed
         let lineImage = AnnotationRenderer.renderAnnotationsOntoImage(
             baseImage: transparent,
-            annotations: [line],
-            selectionRect: NSRect(origin: .zero, size: size),
-            screenshot: transparent
+            annotations: [line]
         )
         let lineCenter = try color(in: lineImage, at: NSPoint(x: 50, y: 40))
         let lineHeadArea = try color(in: lineImage, at: NSPoint(x: 80, y: 50))
@@ -214,9 +265,7 @@ private enum AnnotationTests {
         circle.color = .systemBlue
         let circleImage = AnnotationRenderer.renderAnnotationsOntoImage(
             baseImage: transparent,
-            annotations: [circle],
-            selectionRect: NSRect(origin: .zero, size: size),
-            screenshot: transparent
+            annotations: [circle]
         )
         let circleBorder = try color(in: circleImage, at: NSPoint(x: 50, y: 64))
         let circleCenter = try color(in: circleImage, at: NSPoint(x: 50, y: 40))
@@ -234,9 +283,7 @@ private enum AnnotationTests {
         let highlight = element(.highlight, from: NSPoint(x: 30, y: 20), to: NSPoint(x: 70, y: 60))
         let rendered = AnnotationRenderer.renderAnnotationsOntoImage(
             baseImage: base,
-            annotations: [highlight],
-            selectionRect: NSRect(origin: .zero, size: size),
-            screenshot: base
+            annotations: [highlight]
         )
 
         let outside = try color(in: rendered, at: NSPoint(x: 10, y: 10)).brightnessComponent
@@ -348,6 +395,70 @@ private enum AnnotationTests {
         try expect(exportSelectionPixels == 0, "selection box or resize handles leaked into export")
     }
 
+    private static func testMosaicFrozenSourceAlignment() throws {
+        let screenshotSize = NSSize(width: 120, height: 100)
+        let selectionRect = NSRect(x: 42, y: 31, width: 52, height: 40)
+        let outsideColor = NSColor(deviceRed: 0.86, green: 0.12, blue: 0.08, alpha: 1)
+        let selectionColor = NSColor(deviceRed: 0.08, green: 0.28, blue: 0.88, alpha: 1)
+
+        let screenshot = makeSolidImage(size: screenshotSize, color: outsideColor)
+        screenshot.lockFocus()
+        selectionColor.setFill()
+        NSBezierPath(rect: selectionRect).fill()
+        screenshot.unlockFocus()
+
+        let baseImage = makeSolidImage(size: selectionRect.size, color: selectionColor)
+        let mosaic = element(
+            .mosaic,
+            from: NSPoint(x: 9, y: 7),
+            to: NSPoint(x: 39, y: 29),
+            strokeWidth: 5
+        )
+
+        let overlay = makeSolidImage(size: screenshotSize, color: .clear)
+        overlay.lockFocus()
+        if let context = NSGraphicsContext.current {
+            AnnotationRenderer.draw(
+                element: mosaic,
+                in: context,
+                selectionOrigin: selectionRect.origin,
+                isSelected: false,
+                mosaicSource: AnnotationMosaicSource(
+                    image: screenshot,
+                    selectionOriginInImage: selectionRect.origin
+                ),
+                selectionSize: selectionRect.size
+            )
+        }
+        overlay.unlockFocus()
+
+        let exported = AnnotationRenderer.renderAnnotationsOntoImage(
+            baseImage: baseImage,
+            annotations: [mosaic]
+        )
+        let localSample = NSPoint(x: 24, y: 18)
+        let overlaySample = NSPoint(
+            x: selectionRect.origin.x + localSample.x,
+            y: selectionRect.origin.y + localSample.y
+        )
+        let previewColor = try color(in: overlay, at: overlaySample)
+        let exportColor = try color(in: exported, at: localSample)
+        let expectedColor = try color(in: baseImage, at: localSample)
+
+        try expect(
+            colorsMatch(previewColor, expectedColor, tolerance: 0.03),
+            "Mosaic preview sampled outside the frozen selection: \(previewColor)"
+        )
+        try expect(
+            colorsMatch(exportColor, expectedColor, tolerance: 0.03),
+            "Mosaic export sampled screen-local pixels instead of the frozen selection: \(exportColor)"
+        )
+        try expect(
+            colorsMatch(previewColor, exportColor, tolerance: 0.03),
+            "Mosaic preview and export used different frozen pixels"
+        )
+    }
+
     private static func testGlowAtScreenshotEdges() throws {
         let size = NSSize(width: 50, height: 40)
         let edgeElements = [
@@ -360,9 +471,7 @@ private enum AnnotationTests {
         let transparent = makeSolidImage(size: size, color: .clear)
         let rendered = AnnotationRenderer.renderAnnotationsOntoImage(
             baseImage: transparent,
-            annotations: edgeElements,
-            selectionRect: NSRect(origin: .zero, size: size),
-            screenshot: transparent
+            annotations: edgeElements
         )
         try expect(rendered.size == size, "edge rendering changed the output dimensions")
         let visiblePixels = try countVisiblePixels(in: rendered)
@@ -452,9 +561,7 @@ private enum AnnotationTests {
         let transparent = makeSolidImage(size: imageSize, color: .clear)
         let rendered = AnnotationRenderer.renderAnnotationsOntoImage(
             baseImage: transparent,
-            annotations: [text],
-            selectionRect: NSRect(origin: .zero, size: imageSize),
-            screenshot: transparent
+            annotations: [text]
         )
         let inkBounds = try nonTransparentBounds(in: rendered)
         try expect(!inkBounds.isNull && inkBounds.width > 0 && inkBounds.height > 0, "mixed text did not render visible pixels")
@@ -535,9 +642,7 @@ private enum AnnotationTests {
         let transparent = makeSolidImage(size: size, color: .clear)
         return AnnotationRenderer.renderAnnotationsOntoImage(
             baseImage: transparent,
-            annotations: [element],
-            selectionRect: NSRect(origin: .zero, size: size),
-            screenshot: transparent
+            annotations: [element]
         )
     }
 
@@ -550,8 +655,8 @@ private enum AnnotationTests {
                 in: context,
                 selectionOrigin: .zero,
                 isSelected: isSelected,
-                screenshot: image,
-                selectionRect: NSRect(origin: .zero, size: size)
+                mosaicSource: AnnotationMosaicSource(image: image, selectionOriginInImage: .zero),
+                selectionSize: size
             )
         }
         image.unlockFocus()
@@ -586,9 +691,13 @@ private enum AnnotationTests {
     }
 
     private static func countSelectionBluePixels(in image: NSImage) throws -> Int {
-        try countPixels(in: image) { color in
-            color.blueComponent > 0.55 && color.blueComponent > color.redComponent * 1.5 && color.alphaComponent > 0.25
-        }
+        try countPixels(in: image, matching: isSelectionBlue)
+    }
+
+    private static func isSelectionBlue(_ color: NSColor) -> Bool {
+        color.blueComponent > 0.55 &&
+            color.blueComponent > color.redComponent * 1.5 &&
+            color.alphaComponent > 0.25
     }
 
     private static func countVisiblePixels(in image: NSImage) throws -> Int {
