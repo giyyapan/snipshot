@@ -434,42 +434,31 @@ final class FillToggleButton: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let controlRect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let controlPath = NSBezierPath(roundedRect: controlRect, xRadius: 4, yRadius: 4)
+        if isHovered || isPressed {
+            NSColor.black.withAlphaComponent(isPressed ? 0.08 : 0.04).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+        }
 
+        let boxRect = NSRect(x: 4, y: (bounds.height - 14) / 2, width: 14, height: 14)
+        let boxPath = NSBezierPath(roundedRect: boxRect, xRadius: 3, yRadius: 3)
         if isOn {
-            NSColor.systemBlue.withAlphaComponent(isPressed ? 0.78 : 0.92).setFill()
-            controlPath.fill()
+            NSColor.systemBlue.withAlphaComponent(isPressed ? 0.82 : 0.94).setFill()
+            boxPath.fill()
             NSColor.systemBlue.setStroke()
         } else {
-            let white = isPressed ? 0.68 : (isHovered ? 0.92 : 0.82)
-            NSColor.white.withAlphaComponent(white).setFill()
-            controlPath.fill()
-            NSColor(white: 0.30, alpha: isHovered ? 0.88 : 0.68).setStroke()
-        }
-        controlPath.lineWidth = 1
-        controlPath.stroke()
-
-        let boxRect = NSRect(x: 5, y: (bounds.height - 13) / 2, width: 13, height: 13)
-        let boxPath = NSBezierPath(roundedRect: boxRect, xRadius: 2.5, yRadius: 2.5)
-        if isOn {
-            NSColor.white.withAlphaComponent(0.18).setFill()
+            NSColor.white.withAlphaComponent(0.88).setFill()
             boxPath.fill()
-            NSColor.white.withAlphaComponent(0.95).setStroke()
-        } else {
-            NSColor.white.setFill()
-            boxPath.fill()
-            NSColor(white: 0.25, alpha: 0.85).setStroke()
+            NSColor(white: 0.34, alpha: isHovered ? 0.90 : 0.72).setStroke()
         }
-        boxPath.lineWidth = 1.25
+        boxPath.lineWidth = 1
         boxPath.stroke()
 
         if isOn {
             let check = NSBezierPath()
-            check.move(to: NSPoint(x: boxRect.minX + 2.7, y: boxRect.midY))
-            check.line(to: NSPoint(x: boxRect.minX + 5.4, y: boxRect.minY + 3.2))
-            check.line(to: NSPoint(x: boxRect.maxX - 2.2, y: boxRect.maxY - 3.0))
-            check.lineWidth = 1.7
+            check.move(to: NSPoint(x: boxRect.minX + 3, y: boxRect.midY))
+            check.line(to: NSPoint(x: boxRect.minX + 5.7, y: boxRect.minY + 3.4))
+            check.line(to: NSPoint(x: boxRect.maxX - 2.4, y: boxRect.maxY - 3.1))
+            check.lineWidth = 1.6
             check.lineCapStyle = .round
             check.lineJoinStyle = .round
             NSColor.white.setStroke()
@@ -507,7 +496,7 @@ final class FillToggleButton: NSView {
     }
 
     private func updateLabelColor() {
-        label.textColor = isOn ? .white : NSColor(white: 0.24, alpha: 1)
+        label.textColor = NSColor(white: 0.28, alpha: 1)
     }
 }
 
@@ -548,11 +537,18 @@ final class TwoOptionSegmentedControl: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let outerRect = bounds.insetBy(dx: 0.5, dy: 0.5)
         let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 6, yRadius: 6)
-        NSColor(white: 0.82, alpha: 0.72).setFill()
+        NSColor(white: 0.84, alpha: 0.62).setFill()
         outerPath.fill()
-        NSColor.black.withAlphaComponent(0.14).setStroke()
+        NSColor.black.withAlphaComponent(0.12).setStroke()
         outerPath.lineWidth = 1
         outerPath.stroke()
+
+        let divider = NSBezierPath()
+        divider.move(to: NSPoint(x: bounds.midX, y: 4))
+        divider.line(to: NSPoint(x: bounds.midX, y: bounds.height - 4))
+        divider.lineWidth = 1
+        NSColor.black.withAlphaComponent(0.09).setStroke()
+        divider.stroke()
 
         let segmentWidth = bounds.width / 2
         let selectedRect = NSRect(
@@ -564,14 +560,14 @@ final class TwoOptionSegmentedControl: NSView {
         let selectedPath = NSBezierPath(roundedRect: selectedRect, xRadius: 4.5, yRadius: 4.5)
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.16)
-        shadow.shadowBlurRadius = 1.5
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.10)
+        shadow.shadowBlurRadius = 1
         shadow.shadowOffset = NSSize(width: 0, height: -0.5)
         shadow.set()
-        NSColor.white.withAlphaComponent(0.96).setFill()
+        NSColor.white.withAlphaComponent(0.90).setFill()
         selectedPath.fill()
         NSGraphicsContext.restoreGraphicsState()
-        NSColor.systemBlue.withAlphaComponent(0.55).setStroke()
+        NSColor.black.withAlphaComponent(0.13).setStroke()
         selectedPath.lineWidth = 1
         selectedPath.stroke()
 
@@ -582,14 +578,16 @@ final class TwoOptionSegmentedControl: NSView {
                 width: segmentWidth - 4,
                 height: bounds.height - 4
             )
-            NSColor.white.withAlphaComponent(pressedIndex == hoveredIndex ? 0.72 : 0.48).setFill()
+            NSColor.white.withAlphaComponent(pressedIndex == hoveredIndex ? 0.52 : 0.30).setFill()
             NSBezierPath(roundedRect: hoverRect, xRadius: 4.5, yRadius: 4.5).fill()
         }
 
         for (index, title) in titles.enumerated() {
             let isSelected = index == selectedIndex
             let font = NSFont.systemFont(ofSize: 10.5, weight: isSelected ? .semibold : .medium)
-            let color: NSColor = isSelected ? .systemBlue : NSColor(white: 0.34, alpha: 1)
+            let color: NSColor = isSelected
+                ? NSColor(white: 0.22, alpha: 1)
+                : NSColor(white: 0.42, alpha: 1)
             let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
             let size = (title as NSString).size(withAttributes: attributes)
             let origin = NSPoint(
