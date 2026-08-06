@@ -17,6 +17,7 @@ private enum AnnotationTests {
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
         try test("circle geometry only hits the ellipse border", testCircleGeometry)
         try test("shape fill preference is shared, persistent, and legacy-safe", testShapeFillPreferenceAndCompatibility)
+        try test("Mosaic and Blur modes persist and snapshot per element", testMosaicEffectState)
         try test("filled shapes hit their interiors without changing outline hit testing", testShapeFillHitTesting)
         try test("circle and highlight resize from four corners", testBoxResizeHandles)
         try test("resizable selection frames align with their handles", testResizableSelectionBounds)
@@ -30,6 +31,7 @@ private enum AnnotationTests {
         try test("glow preserves the sharp vector body color and alpha", testGlowPreservesBodyColorAndAlpha)
         try test("overlay and export share rendering without exporting selection UI", testOverlayAndExportRendering)
         try test("Mosaic preview and export sample the same frozen selection pixels", testMosaicFrozenSourceAlignment)
+        try test("Gaussian Blur renders a smooth protected region", testGaussianBlurRendering)
         try test("filled shape overlay preview matches final export", testFilledOverlayAndExportRendering)
         try test("vector glow clips safely at screenshot edges", testGlowAtScreenshotEdges)
         try test("text typography supports English, Chinese, and mixed content", testTextTypographyAndFallback)
@@ -225,6 +227,43 @@ private enum AnnotationTests {
         circle.isFilled = true
         try expect(circle.hitTest(point: NSPoint(x: 50, y: 40)), "filled Circle missed its interior")
         try expect(!circle.hitTest(point: NSPoint(x: 12, y: 68)), "filled Circle hit a corner outside the ellipse")
+    }
+
+    private static func testMosaicEffectState() throws {
+        let suiteName = "AnnotationTests.mosaicEffect.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            throw AnnotationTestFailure(message: "could not create isolated Mosaic effect defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let state = AnnotationState(userDefaults: defaults)
+        try expect(state.mosaicEffect == .mosaic, "legacy/default Mosaic effect should remain pixelation")
+
+        state.setMosaicEffect(.blur)
+        let blurred = state.makeElement(
+            tool: .mosaic,
+            color: .clear,
+            strokeWidth: 12,
+            startPoint: NSPoint(x: 10, y: 10),
+            endPoint: NSPoint(x: 70, y: 50)
+        )
+        try expect(blurred.mosaicEffect == .blur, "new Mosaic element did not snapshot Blur mode")
+        try expect(blurred.copy().mosaicEffect == .blur, "copy dropped the Mosaic effect")
+
+        state.setMosaicEffect(.mosaic)
+        try expect(blurred.mosaicEffect == .blur, "changing the tool preference rewrote an existing element")
+
+        state.elements = [blurred]
+        state.setMosaicEffect(.mosaic, for: blurred)
+        try expect(blurred.mosaicEffect == .mosaic, "selected Mosaic element did not switch effects")
+        state.undo()
+        try expect(state.elements[0].mosaicEffect == .blur, "Mosaic effect undo did not restore Blur")
+        state.redo()
+        try expect(state.elements[0].mosaicEffect == .mosaic, "Mosaic effect redo did not restore pixelation")
+
+        state.setMosaicEffect(.blur)
+        let restoredState = AnnotationState(userDefaults: defaults)
+        try expect(restoredState.mosaicEffect == .blur, "Mosaic effect preference was not persisted")
     }
 
     private static func testBoxResizeHandles() throws {
@@ -616,6 +655,38 @@ private enum AnnotationTests {
             colorsMatch(previewColor, exportColor, tolerance: 0.03),
             "Mosaic preview and export used different frozen pixels"
         )
+    }
+
+    private static func testGaussianBlurRendering() throws {
+        let size = NSSize(width: 100, height: 60)
+        let base = makeSolidImage(size: size, color: .black)
+        base.lockFocus()
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(x: 50, y: 0, width: 50, height: 60)).fill()
+        base.unlockFocus()
+
+        let blur = element(
+            .mosaic,
+            from: NSPoint(x: 10, y: 10),
+            to: NSPoint(x: 90, y: 50),
+            strokeWidth: 20
+        )
+        blur.mosaicEffect = .blur
+        let rendered = AnnotationRenderer.renderAnnotationsOntoImage(
+            baseImage: base,
+            annotations: [blur]
+        )
+
+        let dark = try color(in: rendered, at: NSPoint(x: 20, y: 30)).brightnessComponent
+        let transitionLeft = try color(in: rendered, at: NSPoint(x: 48, y: 30)).brightnessComponent
+        let transitionRight = try color(in: rendered, at: NSPoint(x: 52, y: 30)).brightnessComponent
+        let light = try color(in: rendered, at: NSPoint(x: 80, y: 30)).brightnessComponent
+
+        try expect(dark < 0.12, "Blur contaminated pixels far from the edge: \(dark)")
+        try expect(light > 0.88, "Blur darkened pixels far from the edge: \(light)")
+        try expect(transitionLeft > 0.15 && transitionLeft < 0.65, "Blur did not soften the dark side: \(transitionLeft)")
+        try expect(transitionRight > 0.35 && transitionRight < 0.85, "Blur did not soften the light side: \(transitionRight)")
+        try expect(transitionRight > transitionLeft, "Blur transition is not directionally smooth")
     }
 
     private static func testFilledOverlayAndExportRendering() throws {

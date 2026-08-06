@@ -511,6 +511,128 @@ final class FillToggleButton: NSView {
     }
 }
 
+// MARK: - TwoOptionSegmentedControl
+/// Fixed-light segmented control for compact annotation property bars. It
+/// avoids AppKit appearance mismatches and keeps both choices visible.
+final class TwoOptionSegmentedControl: NSView {
+    var onSelect: ((Int) -> Void)?
+    var selectedIndex: Int {
+        didSet { needsDisplay = true }
+    }
+
+    private let titles: [String]
+    private var hoveredIndex: Int?
+    private var pressedIndex: Int?
+
+    init(frame: NSRect, titles: [String], selectedIndex: Int) {
+        precondition(titles.count == 2)
+        self.titles = titles
+        self.selectedIndex = min(1, max(0, selectedIndex))
+        super.init(frame: frame)
+        wantsLayer = true
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        return bounds.contains(local) ? self : nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let outerRect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 4, yRadius: 4)
+        NSColor.white.withAlphaComponent(0.82).setFill()
+        outerPath.fill()
+        NSColor(white: 0.30, alpha: 0.68).setStroke()
+        outerPath.lineWidth = 1
+        outerPath.stroke()
+
+        let segmentWidth = bounds.width / 2
+        let selectedRect = NSRect(
+            x: CGFloat(selectedIndex) * segmentWidth + 1.5,
+            y: 1.5,
+            width: segmentWidth - 3,
+            height: bounds.height - 3
+        )
+        NSColor.systemBlue.withAlphaComponent(0.92).setFill()
+        NSBezierPath(roundedRect: selectedRect, xRadius: 3, yRadius: 3).fill()
+
+        if let hoveredIndex, hoveredIndex != selectedIndex {
+            let hoverRect = NSRect(
+                x: CGFloat(hoveredIndex) * segmentWidth + 1.5,
+                y: 1.5,
+                width: segmentWidth - 3,
+                height: bounds.height - 3
+            )
+            NSColor.systemBlue.withAlphaComponent(pressedIndex == hoveredIndex ? 0.16 : 0.09).setFill()
+            NSBezierPath(roundedRect: hoverRect, xRadius: 3, yRadius: 3).fill()
+        }
+
+        for (index, title) in titles.enumerated() {
+            let font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+            let color: NSColor = index == selectedIndex ? .white : NSColor(white: 0.24, alpha: 1)
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+            let size = (title as NSString).size(withAttributes: attributes)
+            let origin = NSPoint(
+                x: CGFloat(index) * segmentWidth + (segmentWidth - size.width) / 2,
+                y: (bounds.height - size.height) / 2
+            )
+            (title as NSString).draw(at: origin, withAttributes: attributes)
+        }
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+
+    override func mouseEntered(with event: NSEvent) {
+        updateHover(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateHover(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveredIndex = nil
+        pressedIndex = nil
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        pressedIndex = index(at: convert(event.locationInWindow, from: nil))
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        let releasedIndex = bounds.contains(local) ? index(at: local) : nil
+        let shouldSelect = releasedIndex != nil && releasedIndex == pressedIndex
+        pressedIndex = nil
+        guard shouldSelect, let releasedIndex else {
+            needsDisplay = true
+            return
+        }
+        selectedIndex = releasedIndex
+        onSelect?(releasedIndex)
+    }
+
+    private func updateHover(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        hoveredIndex = bounds.contains(local) ? index(at: local) : nil
+        needsDisplay = true
+    }
+
+    private func index(at point: NSPoint) -> Int {
+        point.x < bounds.midX ? 0 : 1
+    }
+}
+
 // MARK: - ColorDot
 class ColorDot: NSView {
     var onPress: (() -> Void)?

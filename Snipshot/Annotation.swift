@@ -1,4 +1,17 @@
 import Cocoa
+import Accelerate
+
+enum MosaicEffect: String, CaseIterable {
+    case mosaic
+    case blur
+
+    var title: String {
+        switch self {
+        case .mosaic: return "Mosaic"
+        case .blur: return "Blur"
+        }
+    }
+}
 
 // MARK: - Annotation Tool Type
 enum AnnotationTool: String, CaseIterable {
@@ -285,6 +298,9 @@ class AnnotationElement {
     /// Stored per element so later tool preference changes do not alter
     /// existing annotations. The default keeps legacy call sites unfilled.
     var isFilled: Bool
+    /// Mosaic and Gaussian blur share one region tool, but each committed
+    /// element keeps the effect that was active when it was created.
+    var mosaicEffect: MosaicEffect
 
     init(
         tool: AnnotationTool,
@@ -292,7 +308,8 @@ class AnnotationElement {
         strokeWidth: CGFloat,
         startPoint: NSPoint,
         endPoint: NSPoint,
-        isFilled: Bool = false
+        isFilled: Bool = false,
+        mosaicEffect: MosaicEffect = .mosaic
     ) {
         self.tool = tool
         self.color = color
@@ -300,6 +317,7 @@ class AnnotationElement {
         self.startPoint = startPoint
         self.endPoint = endPoint
         self.isFilled = tool.supportsShapeFill && isFilled
+        self.mosaicEffect = tool == .mosaic ? mosaicEffect : .mosaic
     }
 
     func copy() -> AnnotationElement {
@@ -309,7 +327,8 @@ class AnnotationElement {
             strokeWidth: strokeWidth,
             startPoint: startPoint,
             endPoint: endPoint,
-            isFilled: isFilled
+            isFilled: isFilled,
+            mosaicEffect: mosaicEffect
         )
         c.id = id
         c.text = text
@@ -567,6 +586,7 @@ class AnnotationState {
     private static let strokeKey = "annoStrokeWidths"
     private static let rememberedGroupToolsKey = "annoRememberedGroupTools"
     private static let shapeFillKey = "annoShapeFillEnabled"
+    private static let mosaicEffectKey = "annoMosaicEffect"
 
     private let userDefaults: UserDefaults
 
@@ -654,6 +674,12 @@ class AnnotationState {
         }
     }
 
+    var mosaicEffect: MosaicEffect = .mosaic {
+        didSet {
+            userDefaults.set(mosaicEffect.rawValue, forKey: Self.mosaicEffectKey)
+        }
+    }
+
     var elements: [AnnotationElement] = []
     var selectedElementId: UUID? = nil
     var selectedElementIds: Set<UUID> = []  // for multi-select
@@ -687,6 +713,10 @@ class AnnotationState {
         }
 
         shapeFillEnabled = userDefaults.bool(forKey: Self.shapeFillKey)
+        if let rawValue = userDefaults.string(forKey: Self.mosaicEffectKey),
+           let storedEffect = MosaicEffect(rawValue: rawValue) {
+            mosaicEffect = storedEffect
+        }
     }
 
     private func persistRememberedGroupTools() {
@@ -705,7 +735,7 @@ class AnnotationState {
 
     /// Tracks the type of the last debounced property change so only same-type changes merge.
     enum PropertyChangeKind: Equatable {
-        case color, strokeWidth, fill, text
+        case color, strokeWidth, fill, mosaicEffect, text
     }
 
     private var propertyUndoTimer: Timer?
@@ -753,7 +783,7 @@ class AnnotationState {
         for (a, b) in zip(lastSnapshot, elements) {
             if a.id != b.id || a.startPoint != b.startPoint || a.endPoint != b.endPoint ||
                a.strokeWidth != b.strokeWidth || !a.color.isEqual(to: b.color) ||
-               a.isFilled != b.isFilled || a.text != b.text {
+               a.isFilled != b.isFilled || a.mosaicEffect != b.mosaicEffect || a.text != b.text {
                 same = false
                 break
             }
@@ -805,7 +835,8 @@ class AnnotationState {
             strokeWidth: strokeWidth,
             startPoint: startPoint,
             endPoint: endPoint,
-            isFilled: tool.supportsShapeFill && shapeFillEnabled
+            isFilled: tool.supportsShapeFill && shapeFillEnabled,
+            mosaicEffect: tool == .mosaic ? mosaicEffect : .mosaic
         )
     }
 
@@ -817,6 +848,16 @@ class AnnotationState {
         guard element.tool.supportsShapeFill, element.isFilled != enabled else { return }
         pushUndoForPropertyChange(kind: .fill)
         element.isFilled = enabled
+    }
+
+    func setMosaicEffect(_ effect: MosaicEffect, for element: AnnotationElement? = nil) {
+        guard let element else {
+            mosaicEffect = effect
+            return
+        }
+        guard element.tool == .mosaic, element.mosaicEffect != effect else { return }
+        pushUndoForPropertyChange(kind: .mosaicEffect)
+        element.mosaicEffect = effect
     }
 
     func adjustStrokeWidth(delta: CGFloat) {
@@ -901,7 +942,6 @@ class AnnotationState {
 
 // MARK: - Annotation Renderer
 class AnnotationRenderer {
-
     static let highlightOutsideOpacity: CGFloat = 0.42
     static let highlightInsideOpacity: CGFloat = 0.08
 
@@ -1173,7 +1213,31 @@ class AnnotationRenderer {
 
         guard let regionCG = cgImage.cropping(to: imgRect) else { return }
 
-        let blockSize = max(Int(element.strokeWidth), 5)
+        switch element.mosaicEffect {
+        case .mosaic:
+            drawPixelatedRegion(
+                regionCG,
+                destinationRect: destinationRect,
+                blockSize: max(Int(element.strokeWidth), 5),
+                ctx: ctx
+            )
+        case .blur:
+            let imageScale = max(scaleX, scaleY)
+            drawBlurredRegion(
+                regionCG,
+                destinationRect: destinationRect,
+                radius: max(2, element.strokeWidth * 0.65 * imageScale),
+                ctx: ctx
+            )
+        }
+    }
+
+    private static func drawPixelatedRegion(
+        _ regionCG: CGImage,
+        destinationRect: NSRect,
+        blockSize: Int,
+        ctx: CGContext
+    ) {
         let regionImage = NSImage(cgImage: regionCG, size: destinationRect.size)
 
         guard let tiffData = regionImage.tiffRepresentation,
@@ -1192,6 +1256,127 @@ class AnnotationRenderer {
         ctx.interpolationQuality = .none
         smallImage.draw(in: destinationRect, from: NSRect(origin: .zero, size: smallImage.size), operation: .sourceOver, fraction: 1.0)
         ctx.restoreGState()
+    }
+
+    private static func drawBlurredRegion(
+        _ regionCG: CGImage,
+        destinationRect: NSRect,
+        radius: CGFloat,
+        ctx: CGContext
+    ) {
+        guard let outputCG = gaussianBlurredImage(regionCG, radius: radius) else { return }
+        let outputImage = NSImage(cgImage: outputCG, size: destinationRect.size)
+        ctx.saveGState()
+        ctx.interpolationQuality = .high
+        outputImage.draw(
+            in: destinationRect,
+            from: NSRect(origin: .zero, size: outputImage.size),
+            operation: .sourceOver,
+            fraction: 1
+        )
+        ctx.restoreGState()
+    }
+
+    /// Three edge-extended box passes are the standard fast approximation of
+    /// a Gaussian kernel. vImage keeps this responsive while dragging large
+    /// regions and, unlike Core Image, also works in bitmap test contexts.
+    private static func gaussianBlurredImage(_ image: CGImage, radius: CGFloat) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        let rowBytes = width * 4
+        let byteCount = rowBytes * height
+        guard width > 0, height > 0 else { return nil }
+
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+            .union(.byteOrder32Big)
+        var source = [UInt8](repeating: 0, count: byteCount)
+        let drewSource = source.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(
+                data: bytes.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: rowBytes,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo.rawValue
+            ) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drewSource else { return nil }
+
+        var passOne = [UInt8](repeating: 0, count: byteCount)
+        var passTwo = [UInt8](repeating: 0, count: byteCount)
+        var output = [UInt8](repeating: 0, count: byteCount)
+        let kernelRadius = max(1, Int(radius.rounded()))
+        let kernelSize = UInt32(kernelRadius * 2 + 1)
+        let flags = vImage_Flags(kvImageEdgeExtend)
+        var error = kvImageNoError
+
+        source.withUnsafeMutableBytes { sourceBytes in
+            passOne.withUnsafeMutableBytes { firstBytes in
+                passTwo.withUnsafeMutableBytes { secondBytes in
+                    output.withUnsafeMutableBytes { outputBytes in
+                        var sourceBuffer = vImage_Buffer(
+                            data: sourceBytes.baseAddress!,
+                            height: vImagePixelCount(height),
+                            width: vImagePixelCount(width),
+                            rowBytes: rowBytes
+                        )
+                        var firstBuffer = vImage_Buffer(
+                            data: firstBytes.baseAddress!,
+                            height: vImagePixelCount(height),
+                            width: vImagePixelCount(width),
+                            rowBytes: rowBytes
+                        )
+                        var secondBuffer = vImage_Buffer(
+                            data: secondBytes.baseAddress!,
+                            height: vImagePixelCount(height),
+                            width: vImagePixelCount(width),
+                            rowBytes: rowBytes
+                        )
+                        var outputBuffer = vImage_Buffer(
+                            data: outputBytes.baseAddress!,
+                            height: vImagePixelCount(height),
+                            width: vImagePixelCount(width),
+                            rowBytes: rowBytes
+                        )
+
+                        error = vImageBoxConvolve_ARGB8888(
+                            &sourceBuffer, &firstBuffer, nil, 0, 0,
+                            kernelSize, kernelSize, nil, flags
+                        )
+                        guard error == kvImageNoError else { return }
+                        error = vImageBoxConvolve_ARGB8888(
+                            &firstBuffer, &secondBuffer, nil, 0, 0,
+                            kernelSize, kernelSize, nil, flags
+                        )
+                        guard error == kvImageNoError else { return }
+                        error = vImageBoxConvolve_ARGB8888(
+                            &secondBuffer, &outputBuffer, nil, 0, 0,
+                            kernelSize, kernelSize, nil, flags
+                        )
+                    }
+                }
+            }
+        }
+        guard error == kvImageNoError,
+              let provider = CGDataProvider(data: Data(output) as CFData) else { return nil }
+
+        return CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: rowBytes,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo,
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+        )
     }
 
     private static func drawSelectionIndicator(for element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat) {

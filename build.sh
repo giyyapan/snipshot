@@ -71,6 +71,7 @@ swiftc \
     -F "$VENDOR_DIR" \
     -framework Cocoa \
     -framework Carbon \
+    -framework Accelerate \
     -framework Vision \
     -framework VisionKit \
     -framework ServiceManagement \

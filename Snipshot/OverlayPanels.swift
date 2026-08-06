@@ -321,6 +321,7 @@ extension OverlayView {
         guard tool != .highlight else { return }
         let showColors = tool.showsColorControls
         let showFill = tool.supportsShapeFill
+        let showMosaicMode = tool == .mosaic
         let colors = AnnotationState.availableColors
         let colorSize: CGFloat = 18
         let colorSpacing: CGFloat = 3
@@ -340,7 +341,9 @@ extension OverlayView {
         let widthSectionW = minusBtnW + 4 + widthLabelW + 4 + plusBtnW
         let fillControlW: CGFloat = 54
         let fillSectionW = showFill ? dividerW + fillControlW : 0
-        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + fillSectionW + padding
+        let mosaicModeW: CGFloat = 108
+        let mosaicModeSectionW = showMosaicMode ? dividerW + mosaicModeW : 0
+        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + fillSectionW + mosaicModeSectionW + padding
         let h: CGFloat = 28
 
         let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
@@ -400,6 +403,28 @@ extension OverlayView {
         panel.addSubview(plusBtn)
         bx += plusBtnW
 
+        if showMosaicMode {
+            bx += dividerW / 2
+            let modeDivider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
+            modeDivider.wantsLayer = true
+            modeDivider.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+            panel.addSubview(modeDivider)
+            bx += dividerW / 2
+
+            let modeControl = TwoOptionSegmentedControl(
+                frame: NSRect(x: bx, y: (h - 22) / 2, width: mosaicModeW, height: 22),
+                titles: MosaicEffect.allCases.map(\.title),
+                selectedIndex: annoState.mosaicEffect == .mosaic ? 0 : 1
+            )
+            modeControl.onSelect = { [weak self] index in
+                self?.annoState.setMosaicEffect(index == 0 ? .mosaic : .blur)
+                self?.refreshSecondaryPanel()
+                self?.needsDisplay = true
+            }
+            panel.addSubview(modeControl)
+            bx += mosaicModeW
+        }
+
         if showFill {
             bx += dividerW / 2
             let fillDivider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
@@ -433,6 +458,7 @@ extension OverlayView {
         let elementTool = element.tool
         let showColors = elementTool.showsColorControls
         let showFill = elementTool.supportsShapeFill
+        let showMosaicMode = elementTool == .mosaic
         let colors = AnnotationState.availableColors
         let colorSize: CGFloat = 18
         let colorSpacing: CGFloat = 3
@@ -452,10 +478,12 @@ extension OverlayView {
         let widthSectionW = minusBtnW + 4 + widthLabelW + 4 + plusBtnW
         let fillControlW: CGFloat = 54
         let fillSectionW = showFill ? dividerW + fillControlW : 0
+        let mosaicModeW: CGFloat = 108
+        let mosaicModeSectionW = showMosaicMode ? dividerW + mosaicModeW : 0
         let actionBtnSize: CGFloat = 22
         let actionSpacing: CGFloat = 2
         let actionSectionW = actionBtnSize * 2 + actionSpacing  // delete + duplicate
-        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + fillSectionW + dividerW + actionSectionW + padding
+        let totalWidth = padding + colorsWidth + (showColors ? dividerW : 0) + widthSectionW + fillSectionW + mosaicModeSectionW + dividerW + actionSectionW + padding
         let h: CGFloat = 28
 
         let origin = secondaryPanelOrigin(barFrame: barFrame, size: NSSize(width: totalWidth, height: h))
@@ -520,6 +548,28 @@ extension OverlayView {
         }
         panel.addSubview(plusBtn)
         bx += plusBtnW
+
+        if showMosaicMode {
+            bx += dividerW / 2
+            let modeDivider = NSView(frame: NSRect(x: bx - 0.5, y: 5, width: 1, height: h - 10))
+            modeDivider.wantsLayer = true
+            modeDivider.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.4).cgColor
+            panel.addSubview(modeDivider)
+            bx += dividerW / 2
+
+            let modeControl = TwoOptionSegmentedControl(
+                frame: NSRect(x: bx, y: (h - 22) / 2, width: mosaicModeW, height: 22),
+                titles: MosaicEffect.allCases.map(\.title),
+                selectedIndex: element.mosaicEffect == .mosaic ? 0 : 1
+            )
+            modeControl.onSelect = { [weak self] index in
+                self?.annoState.setMosaicEffect(index == 0 ? .mosaic : .blur, for: element)
+                self?.refreshSecondaryPanel()
+                self?.needsDisplay = true
+            }
+            panel.addSubview(modeControl)
+            bx += mosaicModeW
+        }
 
         if showFill {
             bx += dividerW / 2

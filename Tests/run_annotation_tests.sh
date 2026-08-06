@@ -10,6 +10,7 @@ swiftc \
     -target arm64-apple-macosx14.0 \
     -sdk "$(xcrun --show-sdk-path)" \
     -framework Cocoa \
+    -framework Accelerate \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
     "$PROJECT_DIR/Snipshot/UIComponents.swift" \
     "$PROJECT_DIR/Tests/AnnotationTests.swift" \
