@@ -362,7 +362,12 @@ class AnnotationElement {
     /// geometry so its handles sit directly on the dashed border.
     var selectionIndicatorRect: NSRect {
         switch tool {
-        case .arrow, .line, .rectangle, .circle, .mosaic, .highlight:
+        case .rectangle, .circle:
+            // Rectangle/Circle paths are authored on their stroke centerline.
+            // Their visible edge is half a stroke outside that path.
+            let outset = strokeWidth / 2
+            return normalizedRect.insetBy(dx: -outset, dy: -outset)
+        case .arrow, .line, .mosaic, .highlight:
             return normalizedRect
         case .text, .marker, .select:
             return boundingRect
@@ -420,7 +425,7 @@ class AnnotationElement {
             return nil
 
         case .rectangle, .circle, .mosaic, .highlight:
-            let r = normalizedRect
+            let r = selectionIndicatorRect
             let corners: [(AnnoResizeHandle, NSPoint)] = [
                 (.topLeft,     NSPoint(x: r.minX, y: r.maxY)),
                 (.topRight,    NSPoint(x: r.maxX, y: r.maxY)),
@@ -440,6 +445,10 @@ class AnnotationElement {
 
     // Apply resize from a handle drag
     func applyResize(handle: AnnoResizeHandle, to point: NSPoint) {
+        // Rectangle/Circle handles live on the outer painted edge, while their
+        // persisted points define the stroke centerline. Translate the dragged
+        // outer corner back by half the stroke width before updating geometry.
+        let outset = (tool == .rectangle || tool == .circle) ? strokeWidth / 2 : 0
         switch handle {
         case .startPoint:
             startPoint = point
@@ -448,20 +457,20 @@ class AnnotationElement {
         case .topLeft:
             let r = normalizedRect
             // Determine which of start/end is which corner
-            startPoint = NSPoint(x: point.x, y: point.y)
+            startPoint = NSPoint(x: point.x + outset, y: point.y - outset)
             endPoint = NSPoint(x: r.maxX, y: r.minY)
         case .topRight:
             let r = normalizedRect
             startPoint = NSPoint(x: r.minX, y: r.minY)
-            endPoint = NSPoint(x: point.x, y: point.y)
+            endPoint = NSPoint(x: point.x - outset, y: point.y - outset)
         case .bottomLeft:
             let r = normalizedRect
-            startPoint = NSPoint(x: point.x, y: point.y)
+            startPoint = NSPoint(x: point.x + outset, y: point.y + outset)
             endPoint = NSPoint(x: r.maxX, y: r.maxY)
         case .bottomRight:
             let r = normalizedRect
             startPoint = NSPoint(x: r.minX, y: r.maxY)
-            endPoint = NSPoint(x: point.x, y: point.y)
+            endPoint = NSPoint(x: point.x - outset, y: point.y + outset)
         }
     }
 
@@ -1216,8 +1225,8 @@ class AnnotationRenderer {
             }
 
         case .rectangle, .circle, .mosaic, .highlight:
-            // Show handles at four corners of the normalized rect
-            let nr = element.normalizedRect
+            // Show handles at the same four corners as the visible frame.
+            let nr = element.selectionIndicatorRect
             let corners = [
                 NSPoint(x: nr.minX + ox, y: nr.minY + oy),
                 NSPoint(x: nr.maxX + ox, y: nr.minY + oy),

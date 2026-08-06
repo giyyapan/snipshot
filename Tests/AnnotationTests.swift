@@ -228,27 +228,43 @@ private enum AnnotationTests {
     }
 
     private static func testBoxResizeHandles() throws {
-        for tool in [AnnotationTool.circle, .highlight] {
-            let box = element(tool, from: NSPoint(x: 10, y: 10), to: NSPoint(x: 50, y: 40))
-            try expect(box.hitTestResizeHandle(point: NSPoint(x: 10, y: 40)) == .topLeft, "\(tool) top-left handle is missing")
-            try expect(box.hitTestResizeHandle(point: NSPoint(x: 50, y: 10)) == .bottomRight, "\(tool) bottom-right handle is missing")
-            box.applyResize(handle: .topRight, to: NSPoint(x: 70, y: 60))
-            try expect(box.normalizedRect == NSRect(x: 10, y: 10, width: 60, height: 50), "\(tool) corner resize is wrong")
-        }
+        let circle = element(.circle, from: NSPoint(x: 10, y: 10), to: NSPoint(x: 50, y: 40), strokeWidth: 4)
+        try expect(circle.selectionIndicatorRect == NSRect(x: 8, y: 8, width: 44, height: 34), "Circle frame missed its painted outer edge")
+        try expect(circle.hitTestResizeHandle(point: NSPoint(x: 8, y: 42)) == .topLeft, "Circle top-left handle is not on its outer edge")
+        try expect(circle.hitTestResizeHandle(point: NSPoint(x: 52, y: 8)) == .bottomRight, "Circle bottom-right handle is not on its outer edge")
+        circle.applyResize(handle: .topRight, to: NSPoint(x: 72, y: 62))
+        try expect(circle.normalizedRect == NSRect(x: 10, y: 10, width: 60, height: 50), "Circle outer-edge resize mapped to the wrong centerline")
 
-        let highlight = element(.highlight, from: NSPoint(x: 20, y: 20), to: NSPoint(x: 60, y: 50))
-        try expect(highlight.hitTest(point: NSPoint(x: 40, y: 35)), "Highlight focus area was not selectable")
-        try expect(!highlight.hitTest(point: NSPoint(x: 10, y: 10)), "Highlight outside mask should not capture hit testing")
+        let highlight = element(.highlight, from: NSPoint(x: 10, y: 10), to: NSPoint(x: 50, y: 40))
+        try expect(highlight.hitTestResizeHandle(point: NSPoint(x: 10, y: 40)) == .topLeft, "Highlight top-left handle is missing")
+        try expect(highlight.hitTestResizeHandle(point: NSPoint(x: 50, y: 10)) == .bottomRight, "Highlight bottom-right handle is missing")
+        highlight.applyResize(handle: .topRight, to: NSPoint(x: 70, y: 60))
+        try expect(highlight.normalizedRect == NSRect(x: 10, y: 10, width: 60, height: 50), "Highlight corner resize is wrong")
+
+        let highlightHitTarget = element(.highlight, from: NSPoint(x: 20, y: 20), to: NSPoint(x: 60, y: 50))
+        try expect(highlightHitTarget.hitTest(point: NSPoint(x: 40, y: 35)), "Highlight focus area was not selectable")
+        try expect(!highlightHitTarget.hitTest(point: NSPoint(x: 10, y: 10)), "Highlight outside mask should not capture hit testing")
     }
 
     private static func testResizableSelectionBounds() throws {
-        for tool in [
-            AnnotationTool.arrow, .line, .rectangle, .circle, .mosaic, .highlight
-        ] {
+        for tool in [AnnotationTool.arrow, .line, .mosaic, .highlight] {
             let annotation = element(tool, from: NSPoint(x: 20, y: 18), to: NSPoint(x: 80, y: 62), strokeWidth: 6)
             try expect(
                 annotation.selectionIndicatorRect == annotation.normalizedRect,
                 "\(tool)'s visible selection frame has extra padding"
+            )
+        }
+
+        for tool in [AnnotationTool.rectangle, .circle] {
+            let annotation = element(tool, from: NSPoint(x: 20, y: 18), to: NSPoint(x: 80, y: 62), strokeWidth: 6)
+            let expectedOuterEdge = annotation.normalizedRect.insetBy(dx: -3, dy: -3)
+            try expect(
+                annotation.selectionIndicatorRect == expectedOuterEdge,
+                "\(tool)'s visible selection frame did not enclose its outer stroke edge"
+            )
+            try expect(
+                annotation.hitTestResizeHandle(point: NSPoint(x: expectedOuterEdge.minX, y: expectedOuterEdge.maxY)) == .topLeft,
+                "\(tool)'s resizer is not aligned with its visible frame"
             )
         }
 
