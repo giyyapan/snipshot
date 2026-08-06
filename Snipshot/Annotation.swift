@@ -334,6 +334,13 @@ class AnnotationElement {
         return NSRect(x: x, y: y, width: w, height: h)
     }
 
+    /// Bounds used only for the visible editing indicator. Interaction and
+    /// redraw bounds may intentionally be larger, but Mosaic's selection UI
+    /// must coincide with the pixels it replaces.
+    var selectionIndicatorRect: NSRect {
+        tool == .mosaic ? normalizedRect : boundingRect
+    }
+
     private var textBoundingRect: NSRect {
         AnnotationTextLayout.boundingRect(
             text: text,
@@ -497,6 +504,21 @@ class AnnotationElement {
         guard innerX > 0, innerY > 0 else { return true }
         let normalizedInner = pow((point.x - centerX) / innerX, 2) + pow((point.y - centerY) / innerY, 2)
         return normalizedInner >= 1
+    }
+}
+
+// MARK: - Mosaic Source Geometry
+/// A frozen image plus the location, in that image's AppKit coordinate space,
+/// that corresponds to the selection-local annotation origin.
+struct AnnotationMosaicSource {
+    let image: NSImage
+    let selectionOriginInImage: NSPoint
+
+    func sourceRect(for selectionLocalRect: NSRect) -> NSRect {
+        selectionLocalRect.offsetBy(
+            dx: selectionOriginInImage.x,
+            dy: selectionOriginInImage.y
+        )
     }
 }
 
@@ -804,7 +826,14 @@ class AnnotationRenderer {
     static let highlightOutsideOpacity: CGFloat = 0.42
     static let highlightInsideOpacity: CGFloat = 0.08
 
-    static func draw(element: AnnotationElement, in context: NSGraphicsContext, selectionOrigin: NSPoint, isSelected: Bool, screenshot: NSImage? = nil, selectionRect: NSRect? = nil) {
+    static func draw(
+        element: AnnotationElement,
+        in context: NSGraphicsContext,
+        selectionOrigin: NSPoint,
+        isSelected: Bool,
+        mosaicSource: AnnotationMosaicSource? = nil,
+        selectionSize: NSSize? = nil
+    ) {
         let ox = selectionOrigin.x
         let oy = selectionOrigin.y
 
@@ -818,12 +847,12 @@ class AnnotationRenderer {
         case .marker:
             drawMarker(element: element, ctx: context.cgContext, ox: ox, oy: oy)
         case .mosaic:
-            if let screenshot = screenshot, let selRect = selectionRect {
-                drawMosaic(element: element, ctx: context.cgContext, ox: ox, oy: oy, screenshot: screenshot, selectionRect: selRect)
+            if let mosaicSource {
+                drawMosaic(element: element, ctx: context.cgContext, ox: ox, oy: oy, source: mosaicSource)
             }
         case .highlight:
-            if let selRect = selectionRect {
-                drawHighlight(element: element, ox: ox, oy: oy, selectionSize: selRect.size)
+            if let selectionSize {
+                drawHighlight(element: element, ox: ox, oy: oy, selectionSize: selectionSize)
             }
         }
 
@@ -1020,29 +1049,36 @@ class AnnotationRenderer {
         numStr.draw(at: textPoint, withAttributes: attrs)
     }
 
-    private static func drawMosaic(element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat, screenshot: NSImage, selectionRect: NSRect) {
+    private static func drawMosaic(
+        element: AnnotationElement,
+        ctx: CGContext,
+        ox: CGFloat,
+        oy: CGFloat,
+        source: AnnotationMosaicSource
+    ) {
         let r = element.normalizedRect
-        let screenRect = NSRect(x: r.origin.x + ox, y: r.origin.y + oy, width: r.width, height: r.height)
+        let destinationRect = r.offsetBy(dx: ox, dy: oy)
 
-        guard screenRect.width > 1 && screenRect.height > 1 else { return }
+        guard destinationRect.width > 1 && destinationRect.height > 1 else { return }
 
-        guard let cgImage = screenshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        guard let cgImage = source.image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
 
         // Use actual CGImage pixel dimensions for scale, not NSBitmapImageRep.pixelsWide
-        let scaleX = CGFloat(cgImage.width) / screenshot.size.width
-        let scaleY = CGFloat(cgImage.height) / screenshot.size.height
+        let scaleX = CGFloat(cgImage.width) / source.image.size.width
+        let scaleY = CGFloat(cgImage.height) / source.image.size.height
+        let sourceRect = source.sourceRect(for: r)
 
         let imgRect = CGRect(
-            x: screenRect.origin.x * scaleX,
-            y: (screenshot.size.height - screenRect.origin.y - screenRect.height) * scaleY,
-            width: screenRect.width * scaleX,
-            height: screenRect.height * scaleY
+            x: sourceRect.origin.x * scaleX,
+            y: (source.image.size.height - sourceRect.origin.y - sourceRect.height) * scaleY,
+            width: sourceRect.width * scaleX,
+            height: sourceRect.height * scaleY
         )
 
         guard let regionCG = cgImage.cropping(to: imgRect) else { return }
 
         let blockSize = max(Int(element.strokeWidth), 5)
-        let regionImage = NSImage(cgImage: regionCG, size: NSSize(width: screenRect.width, height: screenRect.height))
+        let regionImage = NSImage(cgImage: regionCG, size: destinationRect.size)
 
         guard let tiffData = regionImage.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData) else { return }
@@ -1058,12 +1094,12 @@ class AnnotationRenderer {
 
         ctx.saveGState()
         ctx.interpolationQuality = .none
-        smallImage.draw(in: screenRect, from: NSRect(origin: .zero, size: smallImage.size), operation: .sourceOver, fraction: 1.0)
+        smallImage.draw(in: destinationRect, from: NSRect(origin: .zero, size: smallImage.size), operation: .sourceOver, fraction: 1.0)
         ctx.restoreGState()
     }
 
     private static func drawSelectionIndicator(for element: AnnotationElement, ctx: CGContext, ox: CGFloat, oy: CGFloat) {
-        let r = element.boundingRect
+        let r = element.selectionIndicatorRect
         let screenRect = NSRect(x: r.origin.x + ox, y: r.origin.y + oy, width: r.width, height: r.height)
 
         let path = NSBezierPath(rect: screenRect)
@@ -1118,7 +1154,7 @@ class AnnotationRenderer {
     }
 
     // MARK: - Render annotations onto an image for export
-    static func renderAnnotationsOntoImage(baseImage: NSImage, annotations: [AnnotationElement], selectionRect: NSRect, screenshot: NSImage) -> NSImage {
+    static func renderAnnotationsOntoImage(baseImage: NSImage, annotations: [AnnotationElement]) -> NSImage {
         let size = baseImage.size
         let result = NSImage(size: size)
         result.lockFocus()
@@ -1126,17 +1162,31 @@ class AnnotationRenderer {
         baseImage.draw(in: NSRect(origin: .zero, size: size))
 
         if let context = NSGraphicsContext.current {
+            // Export from the already-cropped frozen selection. This keeps the
+            // Mosaic source in the same local coordinate space as its target
+            // and prevents screen-space offsets from selecting unrelated pixels.
+            let mosaicSource = AnnotationMosaicSource(
+                image: baseImage,
+                selectionOriginInImage: .zero
+            )
             // Draw mosaic elements first (bottom layer) so they only pixelate the original image
             for element in annotations where element.tool == .mosaic {
-                draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
+                draw(
+                    element: element,
+                    in: context,
+                    selectionOrigin: .zero,
+                    isSelected: false,
+                    mosaicSource: mosaicSource,
+                    selectionSize: size
+                )
             }
             // Spotlight is a single background effect: render after mosaic but before ordinary annotations.
             for element in annotations where element.tool == .highlight {
-                draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
+                draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, selectionSize: size)
             }
             // Draw all other annotations on top
             for element in annotations where element.tool != .mosaic && element.tool != .highlight {
-                draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, screenshot: screenshot, selectionRect: selectionRect)
+                draw(element: element, in: context, selectionOrigin: .zero, isSelected: false, selectionSize: size)
             }
         }
 
