@@ -141,10 +141,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     // MARK: - Status Bar
+    private func makeStatusItemImage(warningColor: NSColor? = nil) -> NSImage? {
+        guard let baseImage = NSImage(
+            systemSymbolName: "scissors",
+            accessibilityDescription: "Snipshot"
+        ) else { return nil }
+
+        guard let warningColor else {
+            baseImage.isTemplate = true
+            return baseImage
+        }
+
+        // A non-template hierarchical symbol preserves the warning color in
+        // the menu bar instead of being flattened to the normal black/white
+        // template appearance by NSStatusBarButton.
+        let configuration = NSImage.SymbolConfiguration(hierarchicalColor: warningColor)
+        let warningImage = baseImage.withSymbolConfiguration(configuration) ?? baseImage
+        warningImage.isTemplate = false
+        return warningImage
+    }
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Snipshot")
+            button.image = makeStatusItemImage()
         }
         updateStatusMenu()
     }
@@ -256,9 +276,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         guard let button = statusItem?.button else { return }
         if shortcutSnapshot.isSecureInputEnabled {
-            button.contentTintColor = .systemRed
+            button.image = makeStatusItemImage(warningColor: .systemOrange)
+            button.contentTintColor = .systemOrange
             button.setAccessibilityLabel("Snipshot — global shortcuts blocked by Secure Input")
         } else {
+            button.image = makeStatusItemImage()
             button.contentTintColor = nil
             button.setAccessibilityLabel("Snipshot")
         }
