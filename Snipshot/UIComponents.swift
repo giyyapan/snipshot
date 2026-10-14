@@ -38,7 +38,7 @@ enum ToolbarMenuLayout {
 private class TooltipWindow: NSWindow {
     init(text: String) {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        label.font = SafeFont.system(ofSize: 11, weight: .regular)
         label.textColor = .white
         label.backgroundColor = .clear
         label.sizeToFit()
@@ -243,7 +243,7 @@ class ToolbarMenuItem: NSView {
 
         let trailingWidth: CGFloat = isSelected ? 27 : (shortcut == nil ? 8 : 38)
         let label = NSTextField(labelWithString: title)
-        label.font = NSFont.systemFont(ofSize: 12)
+        label.font = SafeFont.system(ofSize: 12)
         label.textColor = NSColor(white: 0.25, alpha: 1)
         label.frame = NSRect(x: 31, y: (frame.height - 16) / 2, width: frame.width - 31 - trailingWidth, height: 16)
         addSubview(label)
@@ -257,7 +257,7 @@ class ToolbarMenuItem: NSView {
             addSubview(checkmark)
         } else if let shortcut {
             let shortcutLabel = NSTextField(labelWithString: shortcut)
-            shortcutLabel.font = NSFont.systemFont(ofSize: 11)
+            shortcutLabel.font = SafeFont.system(ofSize: 11)
             // Toolbar menus always use a light surface, so a dynamic semantic
             // color can become white in Dark Mode and lose all contrast.
             shortcutLabel.textColor = Self.shortcutTextColor
@@ -340,7 +340,7 @@ class SmallButton: NSView {
         layer?.cornerRadius = 3
 
         label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        label.font = SafeFont.system(ofSize: 11, weight: .bold)
         label.textColor = NSColor(white: 0.4, alpha: 1.0)
         label.alignment = .center
         label.frame = bounds
@@ -406,7 +406,7 @@ final class FillToggleButton: NSView {
         super.init(frame: frame)
 
         wantsLayer = true
-        label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        label.font = SafeFont.system(ofSize: 11, weight: .medium)
         label.alignment = .left
         label.frame = NSRect(x: 23, y: (frame.height - 16) / 2, width: max(0, frame.width - 27), height: 16)
         label.autoresizingMask = [.width]
@@ -584,7 +584,7 @@ final class TwoOptionSegmentedControl: NSView {
 
         for (index, title) in titles.enumerated() {
             let isSelected = index == selectedIndex
-            let font = NSFont.systemFont(ofSize: 10.5, weight: isSelected ? .semibold : .medium)
+            let font = SafeFont.system(ofSize: 10.5, weight: isSelected ? .semibold : .medium)
             let color: NSColor = isSelected
                 ? NSColor(white: 0.22, alpha: 1)
                 : NSColor(white: 0.42, alpha: 1)

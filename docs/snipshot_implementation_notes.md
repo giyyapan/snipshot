@@ -84,9 +84,17 @@ Based on user feedback, numerous small but impactful changes were made to the UI
 | **Tool Selection** | The logic for deselecting a tool by clicking it again was removed. The currently selected tool now remains active until a different tool is chosen. |
 | **Shortcuts** | Keyboard shortcuts were added for all annotation tools (e.g., `T` for Text, `R` for Rectangle) to speed up workflow. These are only active when not in text editing mode. `Cmd+C` now works as a copy shortcut in the selected/annotating state (equivalent to pressing Enter), in addition to the existing `Cmd+S` (save) and `F3` (pin) shortcuts. |
 
+### 4.1. Font Safety (`SafeFont`)
+
+Snipshot 0.10.0 crashed twice (2026-10-14 and 2026-10-15, macOS 26.5.2, both in long-running processes) with `NSInvalidArgumentException: -[__NSPlaceholderDictionary initWithObjects:forKeys:count:]: attempt to insert nil object from objects[0]` inside `OverlayView.drawDimensionLabel(for:)` → `sizeWithAttributes:` → `TAttributes::ApplyFont + 320`.
+
+- **Root cause**: `NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)` returned nil even though AppKit annotates it nonnull. Swift trusts the annotation, so the nil went into the `.font` slot of the attributes dictionary unchecked. CoreText saw no usable font, called `CFDictionaryCreateMutableCopy` on the attributes to insert a default font, and that copy threw on the nil value. A nil `.font` value reproduces the exact stack; a nil `.foregroundColor` does not crash.
+- **Rule**: In code paths that build attribute dictionaries or draw text, do not call `NSFont.systemFont(...)` / `NSFont.monospacedSystemFont(...)` directly. Use `SafeFont.system(ofSize:weight:)` / `SafeFont.monospacedSystem(ofSize:weight:)` (`Snipshot/SafeFont.swift`). They check the AppKit result for nil at runtime (`SafeFont.nonNil`, kept out of line so `-O` cannot fold it away), cache the first good font per design, size and weight, and fall back to other fonts when the factory fails. Each failing (design, size, weight) is logged once as a fault under subsystem `com.giyyapan.snipshot`, category `font`.
+- **Exemption**: Assigning to a control's `NSFont?` `.font` property (e.g. `label.font = .systemFont(...)` in the settings and onboarding windows) is safe, because the control falls back to its default font when it gets nil.
+- **Tests**: `Tests/run_safe_font_tests.sh` builds the tests with both `-Onone` and `-O` and checks that a nil coming back through a nonnull signature is detected.
+
 ## 5. References
 
 [1] Apple Developer Documentation. "ImageAnalysisOverlayView". https://developer.apple.com/documentation/visionkit/imageanalysisoverlayview
 [2] Apple Developer Documentation. "CGWindowListCreateImage". https://developer.apple.com/documentation/coregraphics/1454852-cgwindowlistcreateimage
 [3] Multi.app Blog. "Nailing the activation behavior of a Spotlight/Raycast-like command palette". https://multi.app/blog/nailing-the-activation-behavior-of-a-spotlight-raycast-like-command-palette
-

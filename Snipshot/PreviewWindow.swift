@@ -151,7 +151,7 @@ class PreviewWindow: NSWindow {
         let pixelH = Int(image.size.height * scale)
         let text = "\(pixelW) × \(pixelH)"
 
-        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        let font = SafeFont.monospacedSystem(ofSize: 10, weight: .regular)
         let attrs: [NSAttributedString.Key: Any] = [.font: font]
         let textSize = (text as NSString).size(withAttributes: attrs)
 

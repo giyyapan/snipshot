@@ -21,6 +21,7 @@ The following rules apply only when the active agent/runtime is Manus. They do n
 | `Snipshot/OverlayWindow.swift` | Core: window/view setup, mouse/keyboard events, selection, drawing, window snapping |
 | `Snipshot/OverlayPanels.swift` | Panel management: info panel, bottom toolbar, secondary annotation panel |
 | `Snipshot/UIComponents.swift` | Reusable UI: `HoverIconButton`, `SmallButton`, `ColorDot` |
+| `Snipshot/SafeFont.swift` | Crash-safe font factory. Use `SafeFont.system` / `SafeFont.monospacedSystem` instead of `NSFont.systemFont` / `monospacedSystemFont` when building text attributes (AppKit can return nil despite nonnull; see implementation notes 4.1) |
 | `Snipshot/OCRMode.swift` | OCR (Live Text) mode using VisionKit |
 | `Snipshot/AppDelegate.swift` | App lifecycle, hotkeys (`CGEvent.tapCreate`), screen capture (`CGWindowListCreateImage`), pin windows |
 | `build.sh` | Build script: `./build.sh` (build), `./build.sh notarize` (+ DMG + notarize), `./build.sh release` (+ publish) |

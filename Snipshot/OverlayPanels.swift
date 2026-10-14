@@ -85,7 +85,7 @@ extension OverlayView {
         let pixelW = Int(selectionRect.width * scale)
         let pixelH = Int(selectionRect.height * scale)
         let infoText = "\(pixelW) \u{00D7} \(pixelH)"
-        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        let font = SafeFont.monospacedSystem(ofSize: 10, weight: .regular)
         let hPadding: CGFloat = 10
         let panelHeight: CGFloat = 30
         var y = panelYPosition()
@@ -329,7 +329,7 @@ extension OverlayView {
 
         // Width label for stroke width
         let swText = String(format: "%.0f", annoState.strokeWidths[tool] ?? 3)
-        let swFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        let swFont = SafeFont.monospacedSystem(ofSize: 10, weight: .medium)
         let swAttrs: [NSAttributedString.Key: Any] = [.font: swFont]
         let swSize = (swText as NSString).size(withAttributes: swAttrs)
 
@@ -467,7 +467,7 @@ extension OverlayView {
 
         // Width label for stroke width
         let swText = String(format: "%.0f", element.strokeWidth)
-        let swFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        let swFont = SafeFont.monospacedSystem(ofSize: 10, weight: .medium)
         let swAttrs: [NSAttributedString.Key: Any] = [.font: swFont]
         let swSize = (swText as NSString).size(withAttributes: swAttrs)
 

@@ -708,7 +708,7 @@ class OverlayView: NSView {
         let cellSize: CGFloat = 10
         let gridSize = cellSize * CGFloat(gridN)
         let gridPadding: CGFloat = 3
-        let labelFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        let labelFont = SafeFont.monospacedSystem(ofSize: 10, weight: .medium)
 
         // --- Grid box dimensions (fixed) ---
         let gridBoxWidth = gridSize + gridPadding * 2
@@ -827,9 +827,9 @@ class OverlayView: NSView {
             ]),
         ]
 
-        let headerFont = NSFont.systemFont(ofSize: 11, weight: .bold)
-        let keyFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
-        let descFont = NSFont.systemFont(ofSize: 11, weight: .regular)
+        let headerFont = SafeFont.system(ofSize: 11, weight: .bold)
+        let keyFont = SafeFont.monospacedSystem(ofSize: 11, weight: .medium)
+        let descFont = SafeFont.system(ofSize: 11, weight: .regular)
         let headerAttrs: [NSAttributedString.Key: Any] = [.font: headerFont, .foregroundColor: NSColor(white: 0.95, alpha: 1.0)]
         let keyAttrs: [NSAttributedString.Key: Any] = [.font: keyFont, .foregroundColor: NSColor.white]
         let descAttrs: [NSAttributedString.Key: Any] = [.font: descFont, .foregroundColor: NSColor(white: 0.7, alpha: 1.0)]
@@ -921,8 +921,8 @@ class OverlayView: NSView {
             ("C", "Copy color value"),
         ]
 
-        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        let descFont = NSFont.systemFont(ofSize: 12, weight: .regular)
+        let font = SafeFont.monospacedSystem(ofSize: 12, weight: .medium)
+        let descFont = SafeFont.system(ofSize: 12, weight: .regular)
         let keyAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
         let descAttrs: [NSAttributedString.Key: Any] = [.font: descFont, .foregroundColor: NSColor(white: 0.75, alpha: 1.0)]
 
@@ -1152,7 +1152,7 @@ class OverlayView: NSView {
     private func drawDimensionLabel(for rect: NSRect) {
         let scale: CGFloat = window?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
         let text = "\(Int(rect.width * scale)) \u{00D7} \(Int(rect.height * scale))" as NSString
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.white]
+        let attrs: [NSAttributedString.Key: Any] = [.font: SafeFont.monospacedSystem(ofSize: 11, weight: .medium), .foregroundColor: NSColor.white]
         let ts = text.size(withAttributes: attrs)
         var origin = NSPoint(x: rect.origin.x, y: rect.origin.y - ts.height - 8)
         if origin.y < bounds.minY + 4 { origin.y = rect.maxY + 4 }

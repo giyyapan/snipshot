@@ -345,7 +345,7 @@ class ScrollCaptureController {
         let hintPadding: CGFloat = 16
 
         // Measure text width
-        let font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        let font = SafeFont.system(ofSize: 13, weight: .medium)
         let textSize = (hintText as NSString).size(withAttributes: [.font: font])
         let hintWidth = textSize.width + hintPadding * 2
 
@@ -415,7 +415,7 @@ class ScrollCaptureController {
         hintLabel.stringValue = text
 
         // Resize window to fit new text
-        let font = hintLabel.font ?? NSFont.systemFont(ofSize: 13, weight: .medium)
+        let font = hintLabel.font ?? SafeFont.system(ofSize: 13, weight: .medium)
         let hintPadding: CGFloat = 16
         let textSize = (text as NSString).size(withAttributes: [.font: font])
         let newWidth = textSize.width + hintPadding * 2

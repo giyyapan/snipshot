@@ -12,6 +12,7 @@ swiftc \
     -framework Cocoa \
     -framework Accelerate \
     "$PROJECT_DIR/Snipshot/Annotation.swift" \
+    "$PROJECT_DIR/Snipshot/SafeFont.swift" \
     "$PROJECT_DIR/Snipshot/UIComponents.swift" \
     "$PROJECT_DIR/Tests/AnnotationTests.swift" \
     -o "$TEST_BINARY"

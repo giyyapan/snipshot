@@ -144,7 +144,7 @@ enum AnnotationTextLayout {
     }
 
     static func font(ofSize fontSize: CGFloat) -> NSFont {
-        let systemFallback = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let systemFallback = SafeFont.system(ofSize: fontSize, weight: .medium)
         let descriptor = NSFontDescriptor(fontAttributes: [
             .name: primaryFontName,
             .cascadeList: [systemFallback.fontDescriptor]
@@ -1169,7 +1169,7 @@ class AnnotationRenderer {
 
         let numStr = "\(element.markerNumber)" as NSString
         let fontSize = radius * 1.2
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        let font = SafeFont.system(ofSize: fontSize, weight: .bold)
 
         let textColor: NSColor = .white
 
