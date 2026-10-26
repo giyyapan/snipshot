@@ -27,9 +27,9 @@ enum AIProviderID: String, CaseIterable, Codable {
 
     var defaultModel: String {
         switch self {
-        case .openAI: return "gpt-5.6-luna"
+        case .openAI: return "gpt-6-luna"
         case .anthropic: return "claude-haiku-4-5"
-        case .openRouter: return "openai/gpt-5.6-luna"
+        case .openRouter: return "openai/gpt-6-luna"
         case .custom: return ""
         }
     }
@@ -124,18 +124,22 @@ struct AIModelDescriptor: Codable, Equatable {
     let inputModalities: Set<String>
     let supportedParameters: Set<String>
     let contextLength: Int?
+    let shutdownDate: String?
 
-    init(id: String, displayName: String? = nil, inputModalities: Set<String> = [], supportedParameters: Set<String> = [], contextLength: Int? = nil) {
+    init(id: String, displayName: String? = nil, inputModalities: Set<String> = [], supportedParameters: Set<String> = [], contextLength: Int? = nil, shutdownDate: String? = nil) {
         self.id = id
         self.displayName = displayName ?? id
         self.inputModalities = inputModalities
         self.supportedParameters = supportedParameters
         self.contextLength = contextLength
+        self.shutdownDate = shutdownDate
     }
 
     var supportsImages: Bool? {
         inputModalities.isEmpty ? nil : inputModalities.contains("image")
     }
+
+    var isRetiring: Bool { shutdownDate != nil }
 }
 
 enum AIMessageRole: String {
@@ -387,18 +391,42 @@ enum AIModelParser {
         }
         let models = items.compactMap { item -> AIModelDescriptor? in
             guard let id = item["id"] as? String, !id.isEmpty else { return nil }
-            if provider == .openAI {
-                let excluded = ["text-embedding", "dall-e", "tts-", "whisper-", "omni-moderation", "babbage-", "davinci-"]
-                if excluded.contains(where: { id.lowercased().hasPrefix($0) }) { return nil }
-            }
             let displayName = item["display_name"] as? String ?? item["name"] as? String ?? id
             let supported = Set(item["supported_parameters"] as? [String] ?? [])
             let architecture = item["architecture"] as? [String: Any]
             let modalities = Set(architecture?["input_modalities"] as? [String] ?? [])
             let contextLength = item["context_length"] as? Int
-            return AIModelDescriptor(id: id, displayName: displayName, inputModalities: modalities, supportedParameters: supported, contextLength: contextLength)
-        }.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-        return (models, root["has_more"] as? Bool ?? false, root["last_id"] as? String)
+            let shutdownDate = item["shutdown_date"] as? String
+            return AIModelDescriptor(id: id, displayName: displayName, inputModalities: modalities, supportedParameters: supported, contextLength: contextLength, shutdownDate: shutdownDate)
+        }
+        return (AIModelCatalog.displayableModels(models, provider: provider), root["has_more"] as? Bool ?? false, root["last_id"] as? String)
+    }
+}
+
+enum AIModelCatalog {
+    static func displayableModels(_ models: [AIModelDescriptor], provider: AIProviderID) -> [AIModelDescriptor] {
+        models.filter { shouldDisplay($0, provider: provider) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    private static func shouldDisplay(_ model: AIModelDescriptor, provider: AIProviderID) -> Bool {
+        guard !model.isRetiring else { return false }
+        guard provider == .openAI else { return true }
+
+        let id = model.id.lowercased()
+        let unsupportedPrefixes = [
+            "text-embedding", "dall-e", "tts-", "whisper-", "omni-moderation",
+            "babbage-", "davinci-", "gpt-image", "gpt-live", "gpt-realtime",
+            "gpt-transcribe", "gpt-audio", "computer-use", "sora"
+        ]
+        guard !unsupportedPrefixes.contains(where: { id.hasPrefix($0) }) else { return false }
+
+        // Snipshot needs a current text-and-image model. Keep newer generations
+        // from the live API and omit GPT-3 through GPT-5 legacy families.
+        let legacyGPTPrefixes = ["gpt-3", "gpt-4", "gpt-5", "chatgpt-4"]
+        return !legacyGPTPrefixes.contains { prefix in
+            id == prefix || id.hasPrefix("\(prefix)-") || id.hasPrefix("\(prefix).") || id.hasPrefix("\(prefix)o")
+        }
     }
 }
 

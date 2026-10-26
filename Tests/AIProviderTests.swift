@@ -48,9 +48,9 @@ struct AIProviderTests {
     }
 
     private static func testProviderDefaultsAndKeychainBackend() throws {
-        try expect(AIProviderID.openAI.defaultModel == "gpt-5.6-luna", "OpenAI default is not the current lightweight generation")
+        try expect(AIProviderID.openAI.defaultModel == "gpt-6-luna", "OpenAI default is not the current lightweight generation")
         try expect(AIProviderID.anthropic.defaultModel == "claude-haiku-4-5", "Anthropic default is not the current lightweight model")
-        try expect(AIProviderID.openRouter.defaultModel == "openai/gpt-5.6-luna", "OpenRouter default is not the current lightweight generation")
+        try expect(AIProviderID.openRouter.defaultModel == "openai/gpt-6-luna", "OpenRouter default is not the current lightweight generation")
         let defaultConfiguration = AIProviderConfiguration.defaultConfiguration
         try expect(defaultConfiguration.provider == .openAI, "Fresh installs should start with a mainstream provider")
         try expect(defaultConfiguration.model == AIProviderID.openAI.defaultModel, "Fresh-install model and provider default diverged")
@@ -139,6 +139,10 @@ struct AIProviderTests {
         let anthropic = Data("{\"content\":[{\"type\":\"text\",\"text\":\"OK\"}]}".utf8)
         let anthropicText = try AIResponseParser.parseText(data: anthropic, responseProtocol: .anthropicMessages)
         try expect(anthropicText == "OK", "Anthropic response parse failed")
+
+        let openAIModels = Data("{\"data\":[{\"id\":\"gpt-6-luna\"},{\"id\":\"gpt-6.1-sol\"},{\"id\":\"gpt-5.6-luna\"},{\"id\":\"gpt-4o\"},{\"id\":\"gpt-image-2.5\"},{\"id\":\"gpt-6-retiring\",\"shutdown_date\":\"2026-12-01\"}]}".utf8)
+        let currentOpenAIModels = try AIModelParser.parse(data: openAIModels, provider: .openAI)
+        try expect(currentOpenAIModels.map(\.id) == ["gpt-6-luna", "gpt-6.1-sol"], "OpenAI catalog included legacy, retiring, or non-chat models")
     }
 
     private static func testMigration() throws {

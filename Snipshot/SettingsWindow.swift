@@ -2,7 +2,7 @@ import Cocoa
 import Carbon.HIToolbox
 import ServiceManagement
 
-let kSnipshotVersion = "0.10.1"
+let kSnipshotVersion = "0.10.2"
 
 // MARK: - Hotkey Configuration
 
@@ -64,6 +64,7 @@ class SettingsWindow: NSWindow {
     private var aiApiKeyField: NSSecureTextField!
     private var aiEndpointField: NSTextField!
     private var aiModelPopup: NSPopUpButton!
+    private var aiModelSearchField: NSSearchField!
     private var aiModelField: NSTextField!
     private var aiRefreshModelsButton: NSButton!
     private var aiModelStatusLabel: NSTextField!
@@ -99,6 +100,7 @@ class SettingsWindow: NSWindow {
     // Dirty tracking — Save buttons are disabled until user makes a change
     private var aiConfigDirty = false
     private var aiModels: [AIModelDescriptor] = []
+    private var aiModelListStatus = "Models have not been loaded."
     private var translatePromptDirty = false
     private var ocrPromptDirty = false
 
@@ -586,6 +588,13 @@ class SettingsWindow: NSWindow {
         aiRefreshModelsButton.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(aiRefreshModelsButton)
 
+        aiModelSearchField = NSSearchField()
+        aiModelSearchField.placeholderString = "Search loaded models"
+        aiModelSearchField.font = .systemFont(ofSize: 12)
+        aiModelSearchField.sendsSearchStringImmediately = true
+        aiModelSearchField.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(aiModelSearchField)
+
         aiModelField = NSTextField()
         aiModelField.placeholderString = "Enter a model ID"
         aiModelField.font = .systemFont(ofSize: 12)
@@ -631,7 +640,7 @@ class SettingsWindow: NSWindow {
         aiModelTopBuiltInConstraint = modelLabel.topAnchor.constraint(equalTo: apiKeyLabel.bottomAnchor, constant: fieldGap + 4)
         aiModelTopCustomConstraint = modelLabel.topAnchor.constraint(equalTo: tokenLabel.bottomAnchor, constant: fieldGap + 4)
         aiModelFieldHeightConstraint = aiModelField.heightAnchor.constraint(equalToConstant: 0)
-        aiModelStatusBelowPopupConstraint = aiModelStatusLabel.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: 4)
+        aiModelStatusBelowPopupConstraint = aiModelStatusLabel.topAnchor.constraint(equalTo: aiModelSearchField.bottomAnchor, constant: 2)
         aiModelStatusBelowFieldConstraint = aiModelStatusLabel.topAnchor.constraint(equalTo: aiModelField.bottomAnchor, constant: 2)
 
         // Register for text field editing notifications (dirty tracking)
@@ -641,6 +650,8 @@ class SettingsWindow: NSWindow {
                                                name: NSControl.textDidChangeNotification, object: aiEndpointField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
                                                name: NSControl.textDidChangeNotification, object: aiModelField)
+        NotificationCenter.default.addObserver(self, selector: #selector(aiModelSearchDidChange(_:)),
+                                               name: NSControl.textDidChangeNotification, object: aiModelSearchField)
         NotificationCenter.default.addObserver(self, selector: #selector(aiFieldDidChange(_:)),
                                                name: NSControl.textDidChangeNotification, object: aiCustomHeaderField)
 
@@ -836,7 +847,12 @@ class SettingsWindow: NSWindow {
             aiRefreshModelsButton.centerYAnchor.constraint(equalTo: modelLabel.centerYAnchor),
             aiRefreshModelsButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
 
-            aiModelField.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: fieldGap),
+            aiModelSearchField.topAnchor.constraint(equalTo: modelLabel.bottomAnchor, constant: fieldGap),
+            aiModelSearchField.leadingAnchor.constraint(equalTo: modelLabel.trailingAnchor, constant: 8),
+            aiModelSearchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
+            aiModelSearchField.heightAnchor.constraint(equalToConstant: 24),
+
+            aiModelField.topAnchor.constraint(equalTo: aiModelSearchField.bottomAnchor, constant: fieldGap),
             aiModelField.leadingAnchor.constraint(equalTo: modelLabel.trailingAnchor, constant: 8),
             aiModelField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -margin),
             aiModelFieldHeightConstraint,
@@ -1058,6 +1074,10 @@ class SettingsWindow: NSWindow {
         markAIConfigDirty()
     }
 
+    @objc private func aiModelSearchDidChange(_ notification: Notification) {
+        rebuildFilteredModelPopup()
+    }
+
     private func markAIConfigDirty() {
         aiTestStatusLabel.stringValue = ""
         guard !aiConfigDirty else { return }
@@ -1096,6 +1116,7 @@ class SettingsWindow: NSWindow {
         aiModelField.stringValue = provider.defaultModel
         aiApiKeyField.stringValue = AISettings.apiKey(for: provider)
         aiModels = []
+        aiModelSearchField.stringValue = ""
         aiRefreshModelsButton.isEnabled = true
         updateProviderUI(loadCachedModels: true)
         markAIConfigDirty()
@@ -1152,22 +1173,34 @@ class SettingsWindow: NSWindow {
         guard let data = UserDefaults.standard.data(forKey: modelCacheKey(for: provider)),
               let models = try? JSONDecoder().decode([AIModelDescriptor].self, from: data), !models.isEmpty else {
             rebuildModelPopup(models: [], status: "Using the recommended default. Refresh to browse all available models.")
+            scheduleAIModelRefresh()
             return
         }
         let date = UserDefaults.standard.object(forKey: modelCacheDateKey(for: provider)) as? Date
         let age = date.map { Date().timeIntervalSince($0) }
         let stale = age == nil || age! > 24 * 60 * 60
         rebuildModelPopup(models: models, status: stale ? "Cached model list may be stale · Refresh to update." : "Using cached model list · Refresh to update.")
+        scheduleAIModelRefresh()
     }
 
     private func rebuildModelPopup(models: [AIModelDescriptor], status: String) {
-        aiModels = models
+        aiModels = AIModelCatalog.displayableModels(models, provider: selectedProvider)
+        aiModelListStatus = status
+        rebuildFilteredModelPopup()
+    }
+
+    private func rebuildFilteredModelPopup() {
         aiModelPopup.removeAllItems()
         let currentModel = aiModelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        var displayedModels = models
-        if !currentModel.isEmpty && !displayedModels.contains(where: { $0.id == currentModel }) {
+        let query = aiModelSearchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var displayedModels = aiModels.filter { model in
+            query.isEmpty || model.id.localizedCaseInsensitiveContains(query)
+                || model.displayName.localizedCaseInsensitiveContains(query)
+        }
+        if !currentModel.isEmpty && !aiModels.contains(where: { $0.id == currentModel })
+            && (query.isEmpty || currentModel.localizedCaseInsensitiveContains(query)) {
             displayedModels.insert(
-                AIModelDescriptor(id: currentModel, displayName: models.isEmpty ? "\(currentModel) · recommended" : currentModel),
+                AIModelDescriptor(id: currentModel, displayName: "Current: \(currentModel)"),
                 at: 0
             )
         }
@@ -1188,8 +1221,29 @@ class SettingsWindow: NSWindow {
             aiModelPopup.select(aiModelPopup.lastItem)
             setManualModelEntryVisible(true)
         }
-        aiModelStatusLabel.stringValue = status
+        if query.isEmpty {
+            aiModelStatusLabel.stringValue = aiModelListStatus
+        } else {
+            aiModelStatusLabel.stringValue = "\(displayedModels.count) of \(aiModels.count) models match \"\(query)\"."
+        }
         aiModelStatusLabel.textColor = .secondaryLabelColor
+    }
+
+    private func scheduleAIModelRefresh() {
+        let configuration = draftAIConfiguration()
+        let apiKey = aiApiKeyField.stringValue
+        do {
+            try configuration.validate(apiKey: apiKey)
+        } catch {
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.selectedProvider == configuration.provider,
+                  self.draftAIConfiguration() == configuration,
+                  self.aiApiKeyField.stringValue == apiKey else { return }
+            self.refreshAIModels()
+        }
     }
 
     private func setManualModelEntryVisible(_ visible: Bool) {
@@ -1222,7 +1276,8 @@ class SettingsWindow: NSWindow {
                 }
             case .failure(let error):
                 self.aiModelPopup.isEnabled = true
-                self.aiModelStatusLabel.stringValue = error.localizedDescription + " You can still enter a model ID manually."
+                self.aiModelListStatus = error.localizedDescription + " You can still enter a model ID manually."
+                self.aiModelStatusLabel.stringValue = self.aiModelListStatus
                 self.aiModelStatusLabel.textColor = .systemRed
             }
         }
