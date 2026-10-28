@@ -34,6 +34,77 @@ enum ToolbarMenuLayout {
     }
 }
 
+// MARK: - Secondary Panel Layout
+enum SecondaryPanelLayout {
+    static let gap: CGFloat = 4
+    static let margin: CGFloat = 4
+
+    /// Places a tool-property panel beside the main toolbar without covering the
+    /// selected image whenever the overlay has exterior space available.
+    static func frame(
+        barFrame: NSRect,
+        selectionRect: NSRect,
+        panelSize: NSSize,
+        in bounds: NSRect
+    ) -> NSRect {
+        let visibleBounds = bounds.insetBy(dx: margin, dy: margin)
+        let minX = visibleBounds.minX
+        let maxX = visibleBounds.maxX - panelSize.width
+        let alignedX = maxX >= minX
+            ? min(max(barFrame.maxX - panelSize.width, minX), maxX)
+            : minX
+
+        func panelFrame(x: CGFloat, y: CGFloat) -> NSRect {
+            NSRect(x: x, y: y, width: panelSize.width, height: panelSize.height)
+        }
+
+        func fitsOutsideSelection(_ frame: NSRect) -> Bool {
+            visibleBounds.contains(frame) &&
+                !frame.intersects(selectionRect) &&
+                !frame.intersects(barFrame)
+        }
+
+        let aboveBar = panelFrame(x: alignedX, y: barFrame.maxY + gap)
+        let belowBar = panelFrame(x: alignedX, y: barFrame.minY - gap - panelSize.height)
+        let aboveSelection = panelFrame(x: alignedX, y: selectionRect.maxY + gap)
+        let belowSelection = panelFrame(x: alignedX, y: selectionRect.minY - gap - panelSize.height)
+
+        let sideY = min(
+            max(barFrame.midY - panelSize.height / 2, visibleBounds.minY),
+            visibleBounds.maxY - panelSize.height
+        )
+        let rightOfSelection = panelFrame(x: selectionRect.maxX + gap, y: sideY)
+        let leftOfSelection = panelFrame(x: selectionRect.minX - gap - panelSize.width, y: sideY)
+
+        let barIsBelowSelection = barFrame.maxY <= selectionRect.minY
+        let barIsAboveSelection = barFrame.minY >= selectionRect.maxY
+        let candidates: [NSRect]
+        if barIsBelowSelection {
+            candidates = [belowBar, rightOfSelection, leftOfSelection, aboveSelection]
+        } else if barIsAboveSelection {
+            candidates = [aboveBar, rightOfSelection, leftOfSelection, belowSelection]
+        } else {
+            candidates = [rightOfSelection, leftOfSelection, aboveSelection, belowSelection]
+        }
+
+        if let frame = candidates.first(where: fitsOutsideSelection) {
+            return frame
+        }
+
+        // A near-fullscreen selection can leave no exterior space. Keep the
+        // controls visible and clear of the main toolbar in that case.
+        if visibleBounds.contains(aboveBar) && !aboveBar.intersects(barFrame) {
+            return aboveBar
+        }
+        if visibleBounds.contains(belowBar) && !belowBar.intersects(barFrame) {
+            return belowBar
+        }
+
+        let roomAbove = visibleBounds.maxY - barFrame.maxY
+        return roomAbove >= barFrame.minY - visibleBounds.minY ? aboveBar : belowBar
+    }
+}
+
 // MARK: - Instant Tooltip Window
 private class TooltipWindow: NSWindow {
     init(text: String) {

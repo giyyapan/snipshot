@@ -54,13 +54,12 @@ extension OverlayView {
     }
 
     private func secondaryPanelOrigin(barFrame: NSRect, size: NSSize) -> NSPoint {
-        let gap: CGFloat = 4
-        let x = clampedPanelX(preferredX: barFrame.maxX - size.width, width: size.width)
-        let aboveY = barFrame.maxY + gap
-        if aboveY + size.height <= bounds.maxY - 4 {
-            return NSPoint(x: x, y: aboveY)
-        }
-        return NSPoint(x: x, y: max(bounds.minY + 4, barFrame.minY - gap - size.height))
+        SecondaryPanelLayout.frame(
+            barFrame: barFrame,
+            selectionRect: selectionRect,
+            panelSize: size,
+            in: bounds
+        ).origin
     }
 
     func isPointInPanel(_ point: NSPoint) -> Bool {

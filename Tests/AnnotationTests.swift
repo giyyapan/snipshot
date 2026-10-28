@@ -12,6 +12,7 @@ private enum AnnotationTests {
         try test("toolbar groups stay compact and cycle deterministically", testToolGroupsAndCycling)
         try test("grouped tool preferences persist across annotation states", testGroupedToolPersistence)
         try test("toolbar menus avoid their dedicated triggers", testToolbarMenuPlacement)
+        try test("secondary tool panels stay outside the selected image", testSecondaryPanelPlacement)
         try test("toolbar menu shortcuts keep contrast on the light surface", testToolbarMenuShortcutContrast)
         try test("toolbar menu rows hit test in their parent coordinates", testToolbarMenuItemHitTesting)
         try test("line geometry uses segment hit testing and endpoint handles", testLineGeometry)
@@ -109,6 +110,43 @@ private enum AnnotationTests {
         let clamped = ToolbarMenuLayout.frame(triggerFrame: rightEdgeTrigger, menuSize: menuSize, in: overlayBounds)
         try expect(clamped.maxX <= overlayBounds.maxX - ToolbarMenuLayout.margin, "toolbar menu escaped the right screen edge")
         try expect(clamped.minX >= overlayBounds.minX + ToolbarMenuLayout.margin, "toolbar menu escaped the left screen edge")
+    }
+
+    private static func testSecondaryPanelPlacement() throws {
+        let overlayBounds = NSRect(x: 0, y: 0, width: 1_000, height: 700)
+        let selection = NSRect(x: 200, y: 200, width: 500, height: 300)
+        let panelSize = NSSize(width: 190, height: 28)
+
+        let lowerBar = NSRect(x: 460, y: 158, width: 240, height: 30)
+        let belowSelection = SecondaryPanelLayout.frame(
+            barFrame: lowerBar,
+            selectionRect: selection,
+            panelSize: panelSize,
+            in: overlayBounds
+        )
+        try expect(!belowSelection.intersects(selection), "property panel covered the image above a lower toolbar")
+        try expect(belowSelection.maxY <= lowerBar.minY - SecondaryPanelLayout.gap, "property panel did not continue below the lower toolbar")
+
+        let upperBar = NSRect(x: 460, y: 512, width: 240, height: 30)
+        let aboveSelection = SecondaryPanelLayout.frame(
+            barFrame: upperBar,
+            selectionRect: selection,
+            panelSize: panelSize,
+            in: overlayBounds
+        )
+        try expect(!aboveSelection.intersects(selection), "property panel covered the image below an upper toolbar")
+        try expect(aboveSelection.minY >= upperBar.maxY + SecondaryPanelLayout.gap, "property panel did not continue above the upper toolbar")
+
+        let edgeSelection = NSRect(x: 200, y: 40, width: 500, height: 300)
+        let edgeBar = NSRect(x: 460, y: 4, width: 240, height: 30)
+        let sideFallback = SecondaryPanelLayout.frame(
+            barFrame: edgeBar,
+            selectionRect: edgeSelection,
+            panelSize: panelSize,
+            in: overlayBounds
+        )
+        try expect(!sideFallback.intersects(edgeSelection), "property panel covered the image near the screen edge")
+        try expect(overlayBounds.insetBy(dx: SecondaryPanelLayout.margin, dy: SecondaryPanelLayout.margin).contains(sideFallback), "property panel escaped the overlay bounds")
     }
 
     private static func testToolbarMenuShortcutContrast() throws {
