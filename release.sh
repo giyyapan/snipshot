@@ -11,6 +11,13 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 #   ./release.sh                 Auto-detect version from Info.plist
 #   ./release.sh 0.3.0           Specify version explicitly
 #
+# Release notes (optional):
+#   RELEASE_NOTES=release_notes/0.3.0.md ./release.sh
+#   Defaults to release_notes/<version>.md when that file exists. The Markdown
+#   is used for the GitHub Release body and converted to HTML for the Sparkle
+#   update dialog (supports "## " / "### " headings, "- " bullets, paragraphs,
+#   and `code`).
+#
 # Prerequisites:
 #   1. Run ./build.sh prod first (creates the notarized DMG)
 #   2. gh CLI installed and authenticated (brew install gh && gh auth login)
@@ -42,7 +49,18 @@ DMG_PATH="$BUILD_DIR/$DMG_NAME"
 TAG="v${VERSION}"
 APPCAST_PATH="$BUILD_DIR/appcast.xml"
 
+if [ -z "${RELEASE_NOTES:-}" ] && [ -f "$PROJECT_DIR/release_notes/${VERSION}.md" ]; then
+    RELEASE_NOTES="$PROJECT_DIR/release_notes/${VERSION}.md"
+fi
+if [ -n "${RELEASE_NOTES:-}" ] && [ ! -f "$RELEASE_NOTES" ]; then
+    echo "ERROR: Release notes file not found: $RELEASE_NOTES"
+    exit 1
+fi
+
 echo "=== Publishing Snipshot ${VERSION} ==="
+if [ -n "${RELEASE_NOTES:-}" ]; then
+    echo "  Release notes: $RELEASE_NOTES"
+fi
 echo ""
 
 # --- Validate prerequisites ---
@@ -109,11 +127,23 @@ if gh release view "$TAG" -R "$GITHUB_REPO" &>/dev/null; then
     gh release upload "$TAG" "$DMG_PATH" --clobber -R "$GITHUB_REPO"
 else
     echo "  Creating new release ${TAG}..."
-    gh release create "$TAG" \
-        --title "Snipshot ${VERSION}" \
-        --notes "Snipshot ${VERSION}" \
-        --repo "$GITHUB_REPO" \
-        "$DMG_PATH"
+    if [ -n "${RELEASE_NOTES:-}" ]; then
+        gh release create "$TAG" \
+            --title "Snipshot ${VERSION}" \
+            --notes-file "$RELEASE_NOTES" \
+            --repo "$GITHUB_REPO" \
+            "$DMG_PATH"
+    else
+        gh release create "$TAG" \
+            --title "Snipshot ${VERSION}" \
+            --notes "Snipshot ${VERSION}" \
+            --repo "$GITHUB_REPO" \
+            "$DMG_PATH"
+    fi
+fi
+
+if [ -n "${RELEASE_NOTES:-}" ]; then
+    gh release edit "$TAG" --notes-file "$RELEASE_NOTES" -R "$GITHUB_REPO" > /dev/null
 fi
 
 echo "  DMG uploaded to: $DMG_DOWNLOAD_URL"
@@ -125,6 +155,48 @@ echo ""
 echo "Generating appcast.xml..."
 
 PUB_DATE=$(date -u '+%a, %d %b %Y %H:%M:%S +0000')
+
+# Convert the Markdown release notes to the HTML shown by Sparkle.
+RELEASE_NOTES_HTML=""
+if [ -n "${RELEASE_NOTES:-}" ]; then
+    RELEASE_NOTES_HTML=$(python3 - "$RELEASE_NOTES" <<'PY'
+import html, re, sys
+
+def inline(text):
+    return re.sub(r'`([^`]+)`', r'<code>\1</code>', html.escape(text))
+
+out, in_list = [], False
+for raw in open(sys.argv[1], encoding='utf-8').read().splitlines():
+    line = raw.strip()
+    if line.startswith('- '):
+        if not in_list:
+            out.append('<ul>'); in_list = True
+        out.append('<li>' + inline(line[2:]) + '</li>')
+        continue
+    if in_list:
+        out.append('</ul>'); in_list = False
+    if not line or line.startswith('# '):
+        continue
+    if line.startswith('### '):
+        out.append('<h4>' + inline(line[4:]) + '</h4>')
+    elif line.startswith('## '):
+        out.append('<h3>' + inline(line[3:]) + '</h3>')
+    else:
+        out.append('<p>' + inline(line) + '</p>')
+if in_list:
+    out.append('</ul>')
+print('\n'.join(out).replace(']]>', ']]&gt;'))
+PY
+)
+fi
+
+DESCRIPTION_XML=""
+if [ -n "$RELEASE_NOTES_HTML" ]; then
+    DESCRIPTION_XML="
+            <description><![CDATA[
+${RELEASE_NOTES_HTML}
+            ]]></description>"
+fi
 
 # Check if an existing appcast exists in the repo (download from latest release)
 EXISTING_APPCAST=""
@@ -141,7 +213,7 @@ NEW_ITEM=$(cat <<ITEM_EOF
             <title>Version ${VERSION}</title>
             <sparkle:version>${BUILD_NUMBER}</sparkle:version>
             <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
-            <pubDate>${PUB_DATE}</pubDate>
+            <pubDate>${PUB_DATE}</pubDate>${DESCRIPTION_XML}
             <enclosure url="${DMG_DOWNLOAD_URL}" length="${FILE_LENGTH}" type="application/octet-stream" sparkle:edSignature="${ED_SIGNATURE}" />
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
         </item>
@@ -152,28 +224,29 @@ if [ -n "$EXISTING_APPCAST" ] && grep -q "<channel>" "$EXISTING_APPCAST"; then
     # Insert new item at the top of the channel (after <language> line)
     # First, remove any existing item with the same version
     TEMP_APPCAST="$BUILD_DIR/tmp_appcast_edit.xml"
-    python3 -c "
-import re, sys
+    NEW_ITEM="$NEW_ITEM" VERSION="$VERSION" EXISTING_APPCAST="$EXISTING_APPCAST" APPCAST_PATH="$APPCAST_PATH" python3 - <<'PY'
+import os, re
 
-with open('$EXISTING_APPCAST', 'r') as f:
+version = re.escape(os.environ['VERSION'])
+new_item = '\n' + os.environ['NEW_ITEM']
+
+with open(os.environ['EXISTING_APPCAST'], 'r', encoding='utf-8') as f:
     content = f.read()
 
 # Remove existing item for this version if present
-pattern = r'\\s*<item>.*?<sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>.*?</item>'
+# (each item is matched on its own so the removal cannot span other items)
+pattern = r'\s*<item>(?:(?!</item>).)*?<sparkle:shortVersionString>' + version + r'</sparkle:shortVersionString>.*?</item>'
 content = re.sub(pattern, '', content, flags=re.DOTALL)
 
 # Insert new item after <language>en</language> or after <channel>
-new_item = '''
-${NEW_ITEM}'''
-
 if '<language>' in content:
-    content = re.sub(r'(</language>)', r'\\1' + new_item, content, count=1)
+    content = content.replace('</language>', '</language>' + new_item, 1)
 elif '<channel>' in content:
-    content = re.sub(r'(<channel>)', r'\\1' + new_item, content, count=1)
+    content = content.replace('<channel>', '<channel>' + new_item, 1)
 
-with open('$APPCAST_PATH', 'w') as f:
+with open(os.environ['APPCAST_PATH'], 'w', encoding='utf-8') as f:
     f.write(content)
-"
+PY
     rm -rf "$BUILD_DIR/tmp_appcast"
 else
     # Create fresh appcast
